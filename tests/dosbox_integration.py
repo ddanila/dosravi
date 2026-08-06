@@ -146,6 +146,8 @@ def main() -> int:
     (work / "LISTEN.FLG").write_text("ready\n", encoding="ascii")
     source = work / "HOST.BIN"
     source.write_bytes(bytes(range(256)) * 13)
+    large_source = work / "HOST64.BIN"
+    large_source.write_bytes(bytes(range(256)) * 256)
     stdin_source = work / "HOST.TXT"
     stdin_source.write_bytes(b"remote input\r\n")
 
@@ -250,6 +252,41 @@ def main() -> int:
     client.put(stdin_source, "CHILD.IN")
     size, _ = client.crc("INPUT.BIN")
     assert size == source.stat().st_size
+
+    # GET/CRC may retain one verified identity so the 8086 does not rescan a
+    # complete file before every download chunk. Any mutation must invalidate
+    # that identity before a later request can observe it.
+    client.put(source, "CACHE.BIN")
+    assert client.crc("CACHE.BIN") == (
+        len(source_data),
+        file_crc32(source_data),
+    )
+    replacement_data = stdin_source.read_bytes()
+    client.put(stdin_source, "CACHE.BIN")
+    assert client.crc("CACHE.BIN") == (
+        len(replacement_data),
+        file_crc32(replacement_data),
+    )
+    client.remove("CACHE.BIN")
+    try:
+        client.crc("CACHE.BIN")
+    except RemoteError as exc:
+        assert exc.status == Status.NOT_FOUND
+    else:
+        raise AssertionError("removed file retained a cached identity")
+
+    # Cross the 32 KiB boundary where the DOS C runtime's ftell is signed.
+    # The agent uses DOS's 32-bit seek position for resumable transfers.
+    large_data = large_source.read_bytes()
+    client.put(large_source, "LARGE.BIN")
+    assert client.crc("LARGE.BIN") == (
+        len(large_data),
+        file_crc32(large_data),
+    )
+    large_result = work / "LARGE.OUT"
+    client.get("LARGE.BIN", large_result)
+    assert large_result.read_bytes() == large_data
+    client.remove("LARGE.BIN")
     listing = {entry["name"] for entry in client.list()}
     assert {"INPUT.BIN", "HELLO.COM", "DOSRAVI.COM", "DOSRAVI.OLD"} <= listing
 

@@ -67,11 +67,14 @@ Status values are `OK=0`, `BAD_REQUEST=1`, `NOT_FOUND=2`, `DENIED=3`,
 
 The public PUT operation is the three-command sequence above.  The receiver
 writes `PATH.PART`, persists expected size/CRC metadata, and returns its current
-length after reconnect.  PUT_COMMIT recalculates the complete CRC, closes the
-file, and atomically renames it only on an exact size and CRC match.  GET always
-identifies the complete file and the returned chunk's explicit offset.  v0.1
-uses stop-and-wait and a default 512-byte chunk; peers advertise a larger safe
-limit before it is used.
+length after reconnect. PUT_COMMIT recalculates the complete CRC, closes the
+file, and atomically renames it only on an exact size and CRC match. GET always
+identifies the complete file and the returned chunk's explicit offset. The
+foreground agent may retain one verified path/size/CRC identity across GET and
+CRC requests so an 8086 does not rescan the complete file before every chunk.
+PUT, REMOVE, EXEC, and update operations invalidate that identity before they
+can change workspace contents. v0.1 uses stop-and-wait and a default 512-byte
+chunk; peers advertise a larger safe limit before it is used.
 
 Every request has a nonzero host-selected transaction identifier.  The agent
 caches recent encoded responses.  An identical repeated transaction is not

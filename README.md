@@ -11,6 +11,11 @@ The wire protocol is transport-independent.  Physical serial ports use raw
 8N1; DOSBox-X can expose its null-modem UART as a TCP socket.  The host library
 contains no POSIX details above the transport layer.
 
+The DOS console shows terse logical activity such as `PING PONG`,
+`PUT INPUT.BIN 4096`, `GET READ.BIN`, and `EXEC WILLEM.COM` followed by
+`EXIT 0`. Checksums, offsets, arguments, JSON, payloads, and repeated chunks
+stay off the slow local display. Command-line option names are case-insensitive.
+
 For a persistent emulator agent with no window, X server, sound, or MIDI:
 
 ```sh
@@ -97,6 +102,17 @@ to start the replacement, checks its INFO response, and confirms it.
 `DOSRAVI.OLD` remains available.  A reset before confirmation makes
 `RAVILOAD.BAT` restore that fallback automatically.
 
+The launcher defaults to COM1 at 38400 baud. During link characterization it
+can preserve another rate across replacement restarts, for example:
+
+```dos
+CALL C:\RAVI\RAVILOAD.BAT /COM1 /BAUD:19200 /ROOT:C:\RAVI
+```
+
+On the recorded Pocket8086 plus CP2102/MAX RS-232 setup, sustained transfers
+work through 57,600 baud and 115,200 is rejected. Use 57,600 for the current
+soak and production trials; this is setup-specific, not a universal default.
+
 The hidden `--reference-root` transport runs the native reference agent and is
 used only by integration tests.
 
@@ -122,6 +138,10 @@ C:\RAVI\DOSRAVI.COM /COM1 /BAUD:38400 /ROOT:C:\RAVI
 Start at 9,600 baud for first physical bring-up.  Characterize each real UART,
 cable, and USB-RS232 adapter before raising the rate.  A USB-TTL adapter must
 never be connected directly to a PC RS-232 port.
+
+The DOS agent uses ordinary DOS services for workspace and process behavior.
+It accesses the UART directly and uses a small INT 21h file shim only where the
+dev86 C runtime truncates file positions at its signed 32 KiB boundary.
 
 The exact protocol is in [`docs/protocol.md`](docs/protocol.md), safety and
 recovery invariants in [`docs/safety.md`](docs/safety.md), and physical details

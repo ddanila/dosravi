@@ -232,6 +232,12 @@ class Client:
                         Status.OFFSET_MISMATCH,
                         "remote offset exceeds input",
                     ) from exc
+                if remote_offset <= offset:
+                    raise RemoteError(
+                        Command.PUT_DATA,
+                        Status.IO_ERROR,
+                        "remote upload made no progress",
+                    ) from exc
                 offset = remote_offset
                 continue
             new_offset = as_u32(first(values, Tag.OFFSET))

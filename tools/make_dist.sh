@@ -21,7 +21,8 @@ for source in "$dos_dir"/*; do
         echo "distribution filename is not uppercase DOS 8.3: $name" >&2
         exit 1
     }
-    sed 's/$/\r/' "$source" >"$output/$name"
+    # Normalize either LF or CRLF sources to exactly one DOS CRLF terminator.
+    sed 's/\r$//; s/$/\r/' "$source" >"$output/$name"
 done
 python3 - "$output" <<'PY'
 from pathlib import Path

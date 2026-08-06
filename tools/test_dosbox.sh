@@ -5,8 +5,9 @@ project_root=$(cd "$(dirname "$0")/.." && pwd)
 agent="$project_root/build/dos/DOSRAVI.COM"
 probe="$project_root/build/dos/COMPROBE.COM"
 next_agent="$project_root/build/dos/DOSNEXT.COM"
+file_test="$project_root/build/dos/FILETEST.COM"
 
-[[ -f "$agent" && -f "$probe" && -f "$next_agent" ]] || {
+[[ -f "$agent" && -f "$probe" && -f "$next_agent" && -f "$file_test" ]] || {
     echo "DOS programs are missing; run make dos" >&2
     exit 1
 }
@@ -15,6 +16,28 @@ command -v nasm >/dev/null
 
 test_root=$(mktemp -d /tmp/dosravi-dos-test.XXXXXX)
 trap 'rm -rf "$test_root"' EXIT
+
+test_dos_file_shim() {
+    local drive="$test_root/file-shim"
+    mkdir -p "$drive"
+    cp "$file_test" "$drive/FILETEST.COM"
+    SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy dosbox-x -silent -fastlaunch \
+        -set "dosbox quit warning=false" \
+        -set "sdl output=surface" \
+        -set "cpu cputype=8086" \
+        -set "cpu cycles=max" \
+        -set "midi mididevice=none" \
+        -c "mount c $drive" \
+        -c "c:" \
+        -c "FILETEST > FILETEST.OUT" \
+        -c "exit" >"$drive/DOSBOX.OUT" 2>&1
+    if [[ ! -f "$drive/FILE.OK" || $(stat -c %s "$drive/FILE.BIN") -ne 65536 ]]; then
+        cat "$drive/FILETEST.OUT" >&2
+        stat -c 'FILE.BIN host size: %s' "$drive/FILE.BIN" >&2
+        return 1
+    fi
+    echo "DOS 32-bit file shim passed"
+}
 
 test_boot_rollback() {
     local drive="$test_root/rollback"
@@ -82,24 +105,39 @@ PY
         -c "COMPROBE > PROBE.TXT" \
         -c "ECHO READY>READY.FLG" \
         -c "CALL RAVILOAD.BAT" \
+        -c "ECHO RETURNED>RETURN.OK" \
         -c "exit" >"$mount/DOSBOX.OUT" 2>&1 &
     local dosbox_pid=$!
     set +e
-    timeout 60s tail --pid="$host_pid" -f /dev/null
+    timeout 180s tail --pid="$host_pid" -f /dev/null
     local host_status=$?
+    if [[ $host_status -ne 0 ]]; then
+        kill "$host_pid" "$dosbox_pid" 2>/dev/null || true
+    fi
     wait "$host_pid"
     if [[ $? -ne 0 ]]; then host_status=1; fi
-    if [[ $host_status -ne 0 ]]; then
+    if [[ $host_status -eq 0 ]]; then
+        local return_tries=0
+        while [[ ! -f "$drive/RETURN.OK" && $return_tries -lt 100 ]]; do
+            sleep 0.05
+            return_tries=$((return_tries + 1))
+        done
+        [[ -f "$drive/RETURN.OK" ]] || host_status=1
+    fi
+    local forced_stop=0
+    if kill -0 "$dosbox_pid" 2>/dev/null; then
+        forced_stop=1
         kill "$dosbox_pid" 2>/dev/null || true
+    fi
+    if [[ $host_status -ne 0 ]]; then
+        echo "DOS agent did not complete or return cleanly" >&2
     fi
     wait "$dosbox_pid"
     local dosbox_status=$?
+    if [[ $forced_stop -eq 1 && $host_status -eq 0 ]]; then dosbox_status=0; fi
     set -e
     if [[ $host_status -ne 0 || $dosbox_status -ne 0 ]]; then
         find "$drive" -maxdepth 1 -type f -printf '%f %s bytes\n' >&2
-        if [[ -f "$drive/AGENT.TXT" ]]; then
-            sed -n '1,120p' "$drive/AGENT.TXT" >&2
-        fi
         sed -n '1,240p' "$mount/DOSBOX.OUT" >&2
         return 1
     fi
@@ -108,6 +146,7 @@ PY
     echo "DOSBox-X $cpu serial integration passed"
 }
 
+test_dos_file_shim
 test_boot_rollback
 run_cpu 8086
 run_cpu 80186

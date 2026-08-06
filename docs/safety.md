@@ -11,6 +11,9 @@ The DOS agent is deliberately not a general remote shell.
   Interrupted `.PART` data is resumable only when its saved identity matches.
   DOS replacement uses a hidden recoverable backup around the two renames; a
   retried PUT_BEGIN restores it if promotion was interrupted.
+- GET/CRC retain at most one verified file identity to avoid repeated full-file
+  scans on the 8086. Every upload, removal, child execution, or agent update
+  invalidates it before workspace contents can change.
 - All operations are replay-safe.  EXEC has a persistent execution identity so
   losing its final response cannot repeat a physical operation.
 - Child stdout and stderr use separate per-execution files.  Original DOS

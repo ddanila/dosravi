@@ -102,13 +102,23 @@ layers, leaving room for Windows serial support later.
 `DOSRAVI.COM` will:
 
 - target the 8086 instruction set and tiny memory model;
+- remain a thin foreground transport/EXEC agent: orchestration, policy,
+  experiment analysis, and artifact hashing stay on the modern host;
 - use direct 8250-compatible UART I/O for useful throughput;
 - discover conventional COM base addresses from the BIOS data area, while
   allowing an explicit base address;
 - preserve the original UART state and restore it on normal exit;
+- accept command-line option names case-insensitively and show terse one-line
+  command activity with only the most useful filename, size, or exit status on
+  the local DOS console;
 - restrict file operations to a configured workspace such as `C:\RAVI`;
 - write uploads to temporary files and rename them only after complete
   verification;
+- cache only one verified download identity, invalidating it before every
+  operation that can mutate workspace files, so GET does not rescan a complete
+  file before each 512-byte chunk;
+- use DOS 32-bit file positions rather than the C runtime's signed 32 KiB
+  boundary, and a 64-byte nibble table for whole-file CRC efficiency;
 - execute child `.COM`/`.EXE` programs with a normal DOS command tail; and
 - temporarily redirect and capture the child's DOS standard output and
   standard error, restore the original DOS handles afterward, and return the
@@ -373,6 +383,10 @@ Every physical session directory should contain:
 - Discover COM1/COM2 bases and distinguish relevant 8250/16450/16550 features.
 - Test internal/external loopback and measure the physical baud ceiling.
 - Record the Pocket8086 connector and null-modem pinout.
+- Current physical result: COM1/03F8h with a 16550A-compatible FIFO and the
+  CP2102/MAX RS-232 path is accepted at 57,600 baud after three zero-retry,
+  hash-verified 32 KiB round trips; 115,200 is rejected after repeated
+  512-byte PUT timeouts.
 
 ### M2: Protocol and emulator loop
 
@@ -431,8 +445,9 @@ Every physical session directory should contain:
 
 ## Open decisions
 
-- Confirm the exact Pocket8086 serial connector, COM port, UART identity, and
-  available null-modem/USB-RS232 hardware.
+- Record the exact Pocket8086 connector/gender and null-modem pinout;
+  COM1/03F8h, the 16550A-compatible FIFO, the CP2102/MAX RS-232 adapter, and
+  the accepted 57,600-baud protocol rate are already physically established.
 - Record the complete markings of the available РФ5 chips and identify
   whether a trusted dump or second programmer is available for comparison.
 - Confirm the public `dosravi` name and GPL-2.0-only license before creating the

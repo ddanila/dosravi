@@ -4,6 +4,16 @@ set -euo pipefail
 project_root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$project_root"
 
+python3 - <<'PY'
+from pathlib import Path
+
+for path in Path("dos").glob("*.BAT"):
+    data = path.read_bytes()
+    if b"\n" in data.replace(b"\r\n", b"") or b"\n" not in data:
+        raise SystemExit(f"DOS batch source is not CRLF: {path}")
+print("DOS batch source CRLF validation passed")
+PY
+
 make check
 make dos-test
 make fuzz

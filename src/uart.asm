@@ -211,12 +211,17 @@ _dr_uart_put:
 _dr_uart_drain:
     push bp
     mov bp, sp
+    push cx
     mov dx, [bp+4]
     add dx, 5
+    xor cx, cx
 .drain_wait:
     in al, dx
     test al, 040h
-    jz .drain_wait
+    jnz .drain_done
+    loop .drain_wait
+.drain_done:
+    pop cx
     pop bp
     ret
 

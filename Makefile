@@ -41,10 +41,21 @@ build/dos/uart.o: src/uart.asm
 	mkdir -p build/dos
 	nasm -f as86 $< -o $@
 
-build/dos/DOSRAVI.COM: build/dos/dosmain.o build/dos/protocol.o build/dos/uart.o
+build/dos/dosfile.o: src/dosfile.asm
+	mkdir -p build/dos
+	nasm -f as86 $< -o $@
+
+build/dos/dosfile-test.o: tests/dosfile_test.c include/dosravi.h
+	mkdir -p build/dos
+	bcc $(DOSFLAGS) -Iinclude -c $< -o $@
+
+build/dos/FILETEST.COM: build/dos/dosfile-test.o build/dos/dosfile.o
 	bcc -0 -Md -i -o $@ $^
 
-build/dos/DOSNEXT.COM: build/dos/dosmain-next.o build/dos/protocol.o build/dos/uart.o
+build/dos/DOSRAVI.COM: build/dos/dosmain.o build/dos/protocol.o build/dos/uart.o build/dos/dosfile.o
+	bcc -0 -Md -i -o $@ $^
+
+build/dos/DOSNEXT.COM: build/dos/dosmain-next.o build/dos/protocol.o build/dos/uart.o build/dos/dosfile.o
 	bcc -0 -Md -i -o $@ $^
 
 build/dos/comprobe.o: src/comprobe.c
@@ -58,7 +69,7 @@ dos: build/dos/DOSRAVI.COM build/dos/COMPROBE.COM
 	file build/dos/DOSRAVI.COM
 	file build/dos/COMPROBE.COM
 
-dos-test: dos build/dos/DOSNEXT.COM
+dos-test: dos build/dos/DOSNEXT.COM build/dos/FILETEST.COM
 	bash tools/test_dosbox.sh
 
 dosbox-headless: dos

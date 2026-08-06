@@ -103,6 +103,13 @@ struct upload_meta {
     dr_u32 crc32;
 };
 
+struct download_identity {
+    int valid;
+    char path[13];
+    dr_u32 size;
+    dr_u32 crc32;
+};
+
 struct exec_parameters {
     unsigned environment;
     unsigned command_offset;
@@ -119,6 +126,7 @@ static dr_frame response_frame;
 static dr_u8 encoded_frame[DR_MAX_ENCODED + 1];
 static struct replay_entry replay_cache[CACHE_COUNT];
 static struct execution_entry execution_cache[EXEC_CACHE_COUNT];
+static struct download_identity download_cache;
 static unsigned replay_next;
 static unsigned execution_next;
 static unsigned uart_base;
@@ -126,8 +134,19 @@ static unsigned uart_capability;
 static unsigned char uart_state[7];
 static int running;
 static int requested_exit;
+static int last_logged_command;
+static char last_logged_path[13];
 
 static void send_exec_started();
+extern int dr_dos_open_file(char *name, unsigned mode, unsigned create);
+extern void dr_dos_close_file(int handle);
+extern dr_u32 dr_dos_seek_file(int handle, dr_u32 offset, unsigned origin);
+extern int dr_dos_read_file(int handle, dr_u8 *data, unsigned length);
+extern int dr_dos_write_file(int handle, const dr_u8 *data, unsigned length);
+extern int dr_dos_read_at(int handle, dr_u32 offset, dr_u8 *data,
+                          unsigned length);
+extern int dr_dos_write_at(int handle, dr_u32 offset, const dr_u8 *data,
+                           unsigned length);
 
 static dr_u16 get16(data)
 const dr_u8 *data;
@@ -174,6 +193,23 @@ char *right;
         if (a != b) return 0;
     }
     return *left == *right;
+}
+
+static int same_prefix(text, prefix)
+char *text;
+char *prefix;
+{
+    unsigned char a;
+    unsigned char b;
+    while (*prefix) {
+        if (!*text) return 0;
+        a = (unsigned char)*text++;
+        b = (unsigned char)*prefix++;
+        if (a >= 'a' && a <= 'z') a -= 'a' - 'A';
+        if (b >= 'a' && b <= 'z') b -= 'a' - 'A';
+        if (a != b) return 0;
+    }
+    return 1;
 }
 
 static void uart_send(frame)
@@ -355,6 +391,51 @@ char *output;
     return valid_path_bytes(value, value_length, output);
 }
 
+static void log_command(command, fields, length)
+int command;
+const dr_u8 *fields;
+dr_u16 length;
+{
+    char path[13];
+    dr_u32 size;
+    int has_path;
+    if (command == CMD_PUT_DATA || command == CMD_PUT_COMMIT) return;
+    path[0] = 0;
+    has_path = required_path(fields, length, path);
+    if (command == CMD_GET && last_logged_command == CMD_GET && has_path &&
+        same_text(last_logged_path, path)) return;
+    if (command == CMD_LIST && last_logged_command == CMD_LIST) return;
+    last_logged_command = command;
+    if (has_path) strcpy(last_logged_path, path); else last_logged_path[0] = 0;
+    switch (command) {
+    case CMD_PING: puts("PING PONG"); break;
+    case CMD_INFO: puts("INFO"); break;
+    case CMD_LIST: puts("LIST"); break;
+    case CMD_PUT_BEGIN:
+        if (has_path && required_u32(TAG_SIZE, fields, length, &size))
+            printf("PUT %s %lu\n", path, (unsigned long)size);
+        else puts("PUT");
+        break;
+    case CMD_GET:
+        if (has_path) printf("GET %s\n", path); else puts("GET");
+        break;
+    case CMD_CRC:
+        if (has_path) printf("CRC %s\n", path); else puts("CRC");
+        break;
+    case CMD_REMOVE:
+        if (has_path) printf("REMOVE %s\n", path); else puts("REMOVE");
+        break;
+    case CMD_EXEC:
+        if (has_path) printf("EXEC %s\n", path); else puts("EXEC");
+        break;
+    case CMD_QUIT: puts("QUIT"); break;
+    case CMD_UPDATE: puts("UPDATE"); break;
+    case CMD_UPDATE_CONFIRM: puts("UPDATE OK"); break;
+    case CMD_UPDATE_ROLLBACK: puts("ROLLBACK"); break;
+    default: puts("UNKNOWN"); break;
+    }
+}
+
 static void transfer_names(path, part, meta)
 char *path;
 char *part;
@@ -390,24 +471,59 @@ char *path;
 dr_u32 *size;
 dr_u32 *crc;
 {
-    FILE *file;
     dr_u8 block[512];
     int count;
-    long position;
+    int handle;
+    dr_u32 total;
     dr_u32 running_crc;
-    file = fopen(path, "rb");
-    if (!file) return 0;
+    handle = dr_dos_open_file(path, 0, 0);
+    if (handle < 0) return 0;
+    total = 0;
     running_crc = 0;
-    while ((count = fread(block, 1, sizeof(block), file)) > 0)
+    for (;;) {
+        count = dr_dos_read_file(handle, block, sizeof(block));
+        if (count < 0) {
+            dr_dos_close_file(handle);
+            return 0;
+        }
+        if (count == 0) break;
         running_crc = dr_crc32_update(running_crc, block, (dr_u16)count);
-    position = ftell(file);
-    if (ferror(file) || position < 0) {
-        fclose(file);
-        return 0;
+        total += (dr_u32)count;
     }
-    fclose(file);
-    *size = (dr_u32)position;
+    dr_dos_close_file(handle);
+    *size = total;
     *crc = running_crc;
+    return 1;
+}
+
+static void invalidate_download_identity()
+{
+    download_cache.valid = 0;
+}
+
+static void remember_download_identity(path, size, crc)
+char *path;
+dr_u32 size;
+dr_u32 crc;
+{
+    download_cache.valid = 1;
+    strcpy(download_cache.path, path);
+    download_cache.size = size;
+    download_cache.crc32 = crc;
+}
+
+static int cached_file_identity(path, size, crc)
+char *path;
+dr_u32 *size;
+dr_u32 *crc;
+{
+    if (download_cache.valid && same_text(download_cache.path, path)) {
+        *size = download_cache.size;
+        *crc = download_cache.crc32;
+        return 1;
+    }
+    if (!file_identity(path, size, crc)) return 0;
+    remember_download_identity(path, *size, *crc);
     return 1;
 }
 
@@ -438,6 +554,20 @@ char *name;
     input.x.dx = (unsigned)name;
     int86x(0x21, &input, &output, &segments);
     return output.x.cflag ? -1 : 0;
+}
+
+static int dos_file_size(name, size)
+char *name;
+dr_u32 *size;
+{
+    int handle;
+    int success;
+    handle = dr_dos_open_file(name, 0, 0);
+    if (handle < 0) return 0;
+    *size = dr_dos_seek_file(handle, 0UL, SEEK_END);
+    success = *size != 0xffffffffUL;
+    dr_dos_close_file(handle);
+    return success;
 }
 
 static int dos_chdir(path)
@@ -795,7 +925,7 @@ dr_u16 length;
     struct upload_meta expected;
     struct upload_meta existing;
     FILE *file;
-    long offset;
+    dr_u32 offset;
     if (!required_path(fields, length, path) ||
         !required_u32(TAG_SIZE, fields, length, &expected.size) ||
         !required_u32(TAG_CRC32, fields, length, &expected.crc32)) {
@@ -840,18 +970,13 @@ dr_u16 length;
             }
         }
     }
-    file = fopen(part, "rb");
-    if (file) {
-        fseek(file, 0L, SEEK_END);
-        offset = ftell(file);
-        fclose(file);
-    } else offset = 0;
-    if (offset < 0 || (dr_u32)offset > expected.size) {
+    if (!dos_file_size(part, &offset)) offset = 0;
+    if (offset > expected.size) {
         dos_remove(part);
         offset = 0;
     }
     response_begin(CMD_PUT_BEGIN, STATUS_OK);
-    response_u32(TAG_OFFSET, (dr_u32)offset);
+    response_u32(TAG_OFFSET, offset);
 }
 
 static void handle_put_data(fields, length)
@@ -864,8 +989,8 @@ dr_u16 length;
     const dr_u8 *data;
     dr_u16 data_length;
     dr_u32 offset;
-    FILE *file;
-    long actual;
+    int handle;
+    dr_u32 actual;
     if (!required_path(fields, length, path) ||
         !required_u32(TAG_OFFSET, fields, length, &offset) ||
         find_tlv(TAG_DATA, fields, length, &data, &data_length) != 1 ||
@@ -879,26 +1004,28 @@ dr_u16 length;
         return;
     }
     transfer_names(path, part, meta_name);
-    file = fopen(part, "r+b");
-    if (!file) file = fopen(part, "w+b");
-    if (!file) {
+    actual = 0;
+    if (dos_file_size(part, &actual) && actual != offset) {
+        response_begin(CMD_PUT_DATA, STATUS_OFFSET_MISMATCH);
+        response_u32(TAG_OFFSET, actual);
+        return;
+    }
+    if (actual != offset) {
+        response_begin(CMD_PUT_DATA, STATUS_OFFSET_MISMATCH);
+        response_u32(TAG_OFFSET, actual);
+        return;
+    }
+    handle = dr_dos_open_file(part, 2, 1);
+    if (handle < 0) {
         error_response(CMD_PUT_DATA, STATUS_IO_ERROR, "cannot open upload temporary");
         return;
     }
-    fseek(file, 0L, SEEK_END);
-    actual = ftell(file);
-    if (actual < 0 || (dr_u32)actual != offset) {
-        fclose(file);
-        response_begin(CMD_PUT_DATA, STATUS_OFFSET_MISMATCH);
-        response_u32(TAG_OFFSET, actual < 0 ? 0 : (dr_u32)actual);
-        return;
-    }
-    if (fwrite(data, 1, data_length, file) != data_length || fflush(file)) {
-        fclose(file);
+    if (!dr_dos_write_at(handle, actual, data, data_length)) {
+        dr_dos_close_file(handle);
         error_response(CMD_PUT_DATA, STATUS_IO_ERROR, "upload write failed");
         return;
     }
-    fclose(file);
+    dr_dos_close_file(handle);
     response_begin(CMD_PUT_DATA, STATUS_OK);
     response_u32(TAG_OFFSET, offset + data_length);
 }
@@ -957,6 +1084,7 @@ dr_u16 length;
     }
     dos_remove(backup);
     dos_remove(meta_name);
+    remember_download_identity(path, actual_size, actual_crc);
     response_begin(CMD_PUT_COMMIT, STATUS_OK);
     response_u32(TAG_SIZE, actual_size);
     response_u32(TAG_CRC32, actual_crc);
@@ -973,7 +1101,7 @@ dr_u16 length;
         error_response(CMD_CRC, STATUS_DENIED, "invalid workspace path");
         return;
     }
-    if (!file_identity(path, &size, &crc)) {
+    if (!cached_file_identity(path, &size, &crc)) {
         error_response(CMD_CRC, STATUS_NOT_FOUND, "file not found");
         return;
     }
@@ -991,7 +1119,7 @@ dr_u16 length;
     dr_u32 crc;
     dr_u32 offset;
     dr_u32 chunk_size;
-    FILE *file;
+    int handle;
     int count;
     static dr_u8 chunk[MAX_CHUNK];
     if (!required_path(fields, length, path) ||
@@ -1001,7 +1129,7 @@ dr_u16 length;
         error_response(CMD_GET, STATUS_BAD_REQUEST, "invalid GET fields");
         return;
     }
-    if (!file_identity(path, &size, &crc)) {
+    if (!cached_file_identity(path, &size, &crc)) {
         error_response(CMD_GET, STATUS_NOT_FOUND, "file not found");
         return;
     }
@@ -1011,19 +1139,18 @@ dr_u16 length;
         return;
     }
     if (chunk_size > MAX_CHUNK) chunk_size = MAX_CHUNK;
-    file = fopen(path, "rb");
-    if (!file || fseek(file, (long)offset, SEEK_SET)) {
-        if (file) fclose(file);
-        error_response(CMD_GET, STATUS_IO_ERROR, "file seek failed");
+    handle = dr_dos_open_file(path, 0, 0);
+    if (handle < 0) {
+        error_response(CMD_GET, STATUS_IO_ERROR, "file open failed");
         return;
     }
-    count = fread(chunk, 1, (unsigned)chunk_size, file);
-    if (ferror(file)) {
-        fclose(file);
+    count = dr_dos_read_at(handle, offset, chunk, (unsigned)chunk_size);
+    if (count < 0) {
+        dr_dos_close_file(handle);
         error_response(CMD_GET, STATUS_IO_ERROR, "file read failed");
         return;
     }
-    fclose(file);
+    dr_dos_close_file(handle);
     response_begin(CMD_GET, STATUS_OK);
     response_u32(TAG_SIZE, size);
     response_u32(TAG_CRC32, crc);
@@ -1231,6 +1358,7 @@ dr_u16 length;
             return;
         }
         execution_response(entry);
+        printf("EXIT %lu\n", (unsigned long)entry->exit_code);
         return;
     }
     entry = &execution_cache[execution_next++ % EXEC_CACHE_COUNT];
@@ -1261,6 +1389,7 @@ dr_u16 length;
     }
     entry->valid = 1;
     execution_response(entry);
+    printf("EXIT %lu\n", (unsigned long)entry->exit_code);
 }
 
 static void dispatch_request()
@@ -1275,6 +1404,12 @@ static void dispatch_request()
     command = request_frame.payload[0];
     fields = request_frame.payload + 1;
     length = (dr_u16)(request_frame.payload_length - 1);
+    log_command(command, fields, length);
+    if (command == CMD_PUT_BEGIN || command == CMD_PUT_DATA ||
+        command == CMD_PUT_COMMIT || command == CMD_REMOVE ||
+        command == CMD_EXEC || command == CMD_UPDATE ||
+        command == CMD_UPDATE_CONFIRM || command == CMD_UPDATE_ROLLBACK)
+        invalidate_download_identity();
     switch (command) {
     case CMD_PING: handle_ping(); break;
     case CMD_INFO: handle_info(); break;
@@ -1381,15 +1516,15 @@ unsigned *divisor;
     *root = "C:\\RAVI";
     *divisor = (unsigned)(115200UL / DEFAULT_BAUD);
     for (index = 1; index < argc; ++index) {
-        if (!strncmp(argv[index], "/COM", 4) && argv[index][4] >= '1' &&
+        if (same_prefix(argv[index], "/COM") && argv[index][4] >= '1' &&
             argv[index][4] <= '4' && argv[index][5] == 0) {
             com_index = argv[index][4] - '1';
-        } else if (!strncmp(argv[index], "/BAUD:", 6)) {
+        } else if (same_prefix(argv[index], "/BAUD:")) {
             *divisor = parse_baud(argv[index] + 6);
             if (!*divisor) return 0;
-        } else if (!strncmp(argv[index], "/ROOT:", 6)) {
+        } else if (same_prefix(argv[index], "/ROOT:")) {
             *root = argv[index] + 6;
-        } else if (!strncmp(argv[index], "/BASE:", 6)) {
+        } else if (same_prefix(argv[index], "/BASE:")) {
             base_override = (unsigned)strtoul(argv[index] + 6, &end, 16);
             if (*end || !base_override) return 0;
         } else return 0;
@@ -1415,11 +1550,14 @@ char **argv;
     }
     memset(replay_cache, 0, sizeof(replay_cache));
     memset(execution_cache, 0, sizeof(execution_cache));
+    invalidate_download_identity();
     dr_decoder_init(&decoder);
     dr_uart_save(uart_base, uart_state);
     uart_capability = dr_uart_capability(uart_base);
     dr_uart_init(uart_base, divisor);
     requested_exit = 0;
+    last_logged_command = 0;
+    last_logged_path[0] = 0;
     running = 1;
     while (running) {
         decoded = dr_decoder_byte(&decoder, (dr_u8)dr_uart_get(uart_base),
