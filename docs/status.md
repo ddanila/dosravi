@@ -1,0 +1,41 @@
+# Implementation status
+
+Status reviewed 2026-08-06. `make verify` is the local acceptance command.
+
+| Milestone | State | Evidence or remaining gate |
+|---|---|---|
+| M0 repository/contracts | Partial | Local Git repository, GPL-2.0-only text, layout, CI, protocol and safety documents exist. Public `ddanila/dosravi` creation and the name/license confirmation remain user decisions. |
+| M1 UART characterization | Hardware pending | `COMPROBE.COM` inventories BIOS COM bases, UART/FIFO behavior, internal loopback, and an external-loopback baud sweep from 9,600 through 115,200. The real Pocket8086 connector, null-modem pinout, UART result, and reliable ceiling must be measured. |
+| M2 protocol/emulator | Verified | Cross-language framing fixtures, CRCs, bounded decoder, retry/replay/resume, raw logs, property tests, fault injection, and DOSBox-X TCP null-modem tests pass. |
+| M3 deploy/execute/update | Verified | Headless 8086 and 80186 DOSBox-X runs cover interrupted PUT, resumed GET, path rejection, duplicate transaction/execution replay, child output/artifact/status collection, update confirmation, retained fallback, and boot rollback. |
+| M4 current Willem | Hardware pending | The ten-read runner and artifact/timing/safe-shutdown gates exist. It still needs the real unchanged `WILLEM.COM`, programmer, supported known chip, and trusted expected image. |
+| M5 speed characterization | Integration/hardware pending | The conservative-to-aggressive sweep, first-failure stop, diagnostic trace rerun, drift check, and slower production reacceptance are implemented. `WILLEM.COM` must supply audited `/PROFILE:NAME` tables and local PIT metrics, then the profiles must be run physically. |
+| M6 РФ5 showcase | Hardware pending | No device may be inferred from the family name. Complete chip markings, exact datasheet, socket/switch/power facts, and a trustworthy reference method are required before read-only Willem support or trials. |
+| M7 controlled write | Hardware pending | The host accepts only 28C64, requires `--write`, `WRITE.OK`, hardware/endurance notes, structured local write/verify metrics, safe shutdown proof, and ten accepted post-write reads. A specific supported device and endurance-aware physical sequence are still required. |
+
+## Local verification completed
+
+- Host C and Python tests, Hypothesis fault/property tests, serial termios tests,
+  ruff, and cppcheck.
+- A sanitized AFL++ decoder smoke campaign.
+- Headerless 8086 DOS builds with `bcc` and NASM.
+- Fully headless DOSBox-X integration using SDL dummy video and audio, with no
+  X server or visible UI.
+- DOS 8.3/CRLF distribution validation.
+
+## Required physical inputs
+
+Before M1/M4-M7 can be claimed, record:
+
+1. Pocket8086 serial connector and COM port, `COMPROBE` output, null-modem and
+   USB-RS232 adapter identities, and external-loopback results at every baud.
+2. Willem programmer revision, supply, LPT address, cable/adapter identity, and
+   current diagnostic result.
+3. The supported known chip and trusted reference image for the first ten-read
+   baseline.
+4. Complete РФ5 markings and exact datasheet/reference-programmer information.
+5. For writing, the exact 28C64 marking/datasheet, endurance and erase rules,
+   reviewed `WRITE.OK`, and the audited Willem write algorithm/profile.
+
+Store each run in a dedicated session directory. A failed or interrupted
+physical run remains evidence and must not be replaced by an emulator claim.

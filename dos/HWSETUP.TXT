@@ -1,0 +1,9 @@
+HARDWARE SETUP IS NOT YET CONFIRMED FOR YOUR MACHINE.
+
+Use RS-232 levels through a null-modem cable. A USB-TTL adapter is electrically
+incompatible with a native PC RS-232 port. Record connector, pinout, UART,
+cable, adapter, and reliable baud results before programmer use.
+
+Do not infer a chip pinout from the short RF5 family name. Record the complete
+marking and exact datasheet, capacity, voltage, socket position, DIP switches,
+and programmer revision. The RF5 milestone is read-only and VPP remains off.
