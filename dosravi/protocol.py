@@ -79,6 +79,7 @@ class Tag(IntEnum):
     CHUNK_SIZE = 13
     ELAPSED_MS = 14
     ARTIFACT = 15
+    STDIN = 16
 
 
 def crc16_ccitt(data: bytes, initial: int = 0xFFFF) -> int:

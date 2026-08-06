@@ -9,6 +9,8 @@ The DOS agent is deliberately not a general remote shell.
   regular file and has no wildcard or recursive form.
 - Uploads never replace their destination until full size and CRC-32 match.
   Interrupted `.PART` data is resumable only when its saved identity matches.
+  DOS replacement uses a hidden recoverable backup around the two renames; a
+  retried PUT_BEGIN restores it if promotion was interrupted.
 - All operations are replay-safe.  EXEC has a persistent execution identity so
   losing its final response cannot repeat a physical operation.
 - Child stdout and stderr use separate per-execution files.  Original DOS
@@ -28,6 +30,13 @@ The DOS agent is deliberately not a general remote shell.
   discarded during staging, and `RAVILOAD.BAT` restores it after an
   unconfirmed reset.  Host confirmation is sent only after the replacement
   answers PING/INFO over the real UART path.
+- Normal PUT/REMOVE operations deny the agent, fallback, pending marker, and
+  launcher control names. `DOSRAVI.NEW` can be uploaded, but it can only be
+  promoted by the CRC-checked UPDATE command.
+- Physical execution IDs are written and fsynced to the session before EXEC.
+  Resuming the same output directory reuses those IDs. Completed write evidence
+  is bound to the image CRC and Willem build hash, so a host restart does not
+  silently schedule the programming operation again.
 
 Before physical programmer use, verify the null-modem electrical connection,
 begin at a conservative baud, run a harmless diagnostic, and prove an existing

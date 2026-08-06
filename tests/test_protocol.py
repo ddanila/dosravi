@@ -22,6 +22,7 @@ from dosravi.protocol import (
     request_payload,
 )
 from dosravi.session import (
+    parse_legacy_willem_log,
     parse_willem_log,
     parse_willem_write_log,
     timing_summary,
@@ -127,6 +128,22 @@ class IntegrationTests(unittest.TestCase):
                 self.client.crc(path)
             self.assertIn(caught.exception.status, (Status.DENIED, Status.NOT_FOUND))
 
+    def test_agent_control_files_require_update_path(self) -> None:
+        local = self.root / "agent.com"
+        local.write_bytes(b"replacement")
+        with self.assertRaises(RemoteError) as caught:
+            self.client.put(local, "DOSRAVI.COM")
+        self.assertEqual(caught.exception.status, Status.DENIED)
+        (self.root / "remote" / "DOSRAVI.OLD").write_bytes(b"fallback")
+        with self.assertRaises(RemoteError) as caught:
+            self.client.remove("DOSRAVI.OLD")
+        self.assertEqual(caught.exception.status, Status.DENIED)
+
+    def test_zero_transaction_is_rejected(self) -> None:
+        with self.assertRaises(RemoteError) as caught:
+            self.client.request(Command.PING, transaction=0)
+        self.assertEqual(caught.exception.status, Status.BAD_REQUEST)
+
     def test_partial_download_resume(self) -> None:
         data = os.urandom(2000)
         (self.root / "remote" / "ROM.BIN").write_bytes(data)
@@ -134,6 +151,25 @@ class IntegrationTests(unittest.TestCase):
         destination.with_name("rom.bin.part").write_bytes(data[:777])
         self.client.get("ROM.BIN", destination)
         self.assertEqual(destination.read_bytes(), data)
+
+    def test_stale_download_partial_restarts_safely(self) -> None:
+        data = os.urandom(2000)
+        (self.root / "remote" / "ROM.BIN").write_bytes(data)
+        for stale in (os.urandom(2000), os.urandom(3000)):
+            destination = self.root / "rom.bin"
+            destination.with_name("rom.bin.part").write_bytes(stale)
+            self.client.get("ROM.BIN", destination)
+            self.assertEqual(destination.read_bytes(), data)
+
+    def test_list_paginates_complete_workspace(self) -> None:
+        remote = self.root / "remote"
+        for index in range(70):
+            (remote / f"F{index:07d}.BIN").write_bytes(bytes([index]))
+        listing = self.client.list()
+        self.assertEqual(len(listing), 70)
+        self.assertEqual(
+            {item["name"] for item in listing}, {f"F{i:07d}.BIN" for i in range(70)}
+        )
 
 
 class AcceptanceTests(unittest.TestCase):
@@ -189,12 +225,46 @@ class AcceptanceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 parse_willem_log(log)
 
+    def test_profile_metric_freezes_parameters_and_build(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "WILLEM.LOG"
+            log.write_text(
+                "DOSRAVI_PROFILE name=balanced address_setup_us=4 "
+                "oe_settle_us=8 input_latch_us=3 input_clock_us=2 "
+                "power_on_ms=100 build_id=git-deadbeef\n"
+                "DOSRAVI_METRIC read_ms=900 profile=balanced\n"
+                "Safe shutdown complete: VCC off, VPP off\n",
+                encoding="ascii",
+            )
+            result = parse_willem_log(log, "balanced")
+            self.assertEqual(result["parameters"]["oe_settle_us"], 8)
+            with self.assertRaises(ValueError):
+                parse_willem_log(log, "fast")
+
+    def test_legacy_current_willem_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "WILLEM.LOG"
+            log.write_text(
+                "[2026-08-06 12:00:00.00] ================ BEGIN RUN ================\n"
+                "[2026-08-06 12:00:00.01] Willem V30 version 0.0.5; 8086-compatible\n"
+                "[2026-08-06 12:00:00.02] Operation=READ device=2764 image=READ01.BIN LPT=378h trace=off\n"
+                "[2026-08-06 12:00:00.10] Power transition: enabling VCC, VPP off\n"
+                "[2026-08-06 12:00:01.35] Safe shutdown complete: VCC off, VPP off\n"
+                "[2026-08-06 12:00:01.36] Read complete: bytes=8192 CRC16-CCITT=1234\n"
+                "[2026-08-06 12:00:01.37] ================= END RUN =================\n",
+                encoding="ascii",
+            )
+            result = parse_legacy_willem_log(log, "2764")
+            self.assertEqual(result["read_ms"], 1250)
+            self.assertTrue(result["safe_shutdown"])
+
     def test_structured_willem_write_metric_requires_safe_shutdown(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "WILLEM.LOG"
             log.write_text(
                 "DOSRAVI_WRITE_METRIC program_ms=1200 verify_ms=800 "
-                "changed=4096 unchanged=4096 retry_bytes=2 retries=3 late=1\n"
+                "changed=4096 unchanged=4096 retry_bytes=2 retries=3 late=1 "
+                "image_crc32=1234abcd build_id=git-deadbeef\n"
                 "Safe shutdown complete: VCC off, VPP off\n",
                 encoding="ascii",
             )
@@ -208,12 +278,17 @@ class AcceptanceTests(unittest.TestCase):
                     "retry_bytes": 2,
                     "retries": 3,
                     "late": 1,
+                    "image_crc32": "1234abcd",
+                    "build_id": "git-deadbeef",
                     "safe_shutdown": True,
                 },
             )
+            with self.assertRaises(ValueError):
+                parse_willem_write_log(log, "deadbeef")
             log.write_text(
                 "DOSRAVI_WRITE_METRIC program_ms=1 verify_ms=1 "
-                "changed=1 unchanged=0 retry_bytes=0 retries=0 late=0\n",
+                "changed=1 unchanged=0 retry_bytes=0 retries=0 late=0 "
+                "image_crc32=1234abcd build_id=git-deadbeef\n",
                 encoding="ascii",
             )
             with self.assertRaises(ValueError):

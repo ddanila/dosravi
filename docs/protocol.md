@@ -36,7 +36,8 @@ TLVs.  A TLV is a one-byte tag, a two-byte value length, and the value.
 Stable tags are: `PATH=1`, `OFFSET=2`, `SIZE=3`, `CRC32=4`, `DATA=5`,
 `ARGS=6`, `EXEC_ID=7`, `EXIT_CODE=8`, `STDOUT=9`, `STDERR=10`, `JSON=11`,
 `MESSAGE=12`, `CHUNK_SIZE=13`, `ELAPSED_MS=14`, and `ARTIFACT=15`.  Integer
-values occupy exactly four bytes.  Paths and arguments are ASCII.  JSON is
+values occupy exactly four bytes. `STDIN=16` is an optional workspace filename
+whose contents become child handle 0. Paths and arguments are ASCII. JSON is
 UTF-8 and only used for human-oriented INFO/LIST metadata, never for transfer
 control.
 
@@ -50,14 +51,14 @@ Status values are `OK=0`, `BAD_REQUEST=1`, `NOT_FOUND=2`, `DENIED=3`,
 |---:|---|---|---|
 | 1 | PING | none | MESSAGE=`PONG` |
 | 2 | INFO | none | JSON capability object |
-| 3 | LIST | none | JSON array of regular files |
+| 3 | LIST | optional OFFSET (zero initially) | JSON page; next OFFSET and MORE when another page exists |
 | 4 | PUT_BEGIN | PATH, SIZE, CRC32 | resumable OFFSET |
 | 5 | PUT_DATA | PATH, OFFSET, DATA | next OFFSET |
 | 6 | PUT_COMMIT | PATH, SIZE, CRC32 | SIZE, CRC32 |
 | 7 | GET | PATH, OFFSET, CHUNK_SIZE | SIZE, CRC32, OFFSET, DATA |
 | 8 | CRC | PATH | SIZE, CRC32 |
 | 9 | REMOVE | PATH | no fields |
-| 10 | EXEC | PATH, ARGS, EXEC_ID | EXEC_ID, EXIT_CODE, STDOUT, STDERR, ELAPSED_MS |
+| 10 | EXEC | PATH, ARGS, EXEC_ID; optional STDIN | EXEC_ID, EXIT_CODE, STDOUT, STDERR, ELAPSED_MS |
 | 11 | EXEC_RESULT | EXEC_ID | cached execution result (reserved for asynchronous agents) |
 | 12 | QUIT | none | no fields, then UART restoration |
 | 13 | UPDATE | PATH=`DOSRAVI.NEW`, SIZE, CRC32 | staged acknowledgement, then launcher restart |
@@ -76,13 +77,19 @@ Every request has a nonzero host-selected transaction identifier.  The agent
 caches recent encoded responses.  An identical repeated transaction is not
 dispatched again; the cached response is returned with REPLAY set.  Reusing a
 transaction identifier with different request bytes is a protocol error.
+LIST pagination is transparent in the host API and bounds DOS memory even when
+an experiment workspace contains many captures.
 
 EXEC additionally has a stable execution identifier whose completed result is
 cached independently of the frame replay window.  A host reconnect may submit
 the same execution identifier without running the program twice.  The agent
-acknowledges only after redirecting DOS handles 1 and 2, restores both handles
-after INT 21h/4B00 returns, obtains the child status through INT 21h/4D00, and
-then responds.  A hung child requires external reset in the foreground design.
+emits a `STARTED` event only after redirecting DOS handles 1 and 2, restores
+those handles (and optional handle 0) after INT 21h/4B00 returns, obtains the child status through INT
+21h/4D00, and then responds. A hung child requires external reset in the
+foreground design.
+Receipt of `STARTED` extends the host's bounded completion wait without
+retransmitting the EXEC request. The default is 300 seconds and is configurable
+independently from the ordinary frame timeout.
 
 UPDATE accepts only the fixed `DOSRAVI.NEW` staging name and checks the complete
 size and CRC-32 again.  The old agent is retained as `DOSRAVI.OLD`; a pending
@@ -90,3 +97,6 @@ marker makes an unconfirmed boot recoverable.  Staging and rollback respond
 before restoring the UART and returning the reserved status 85 to
 `RAVILOAD.BAT`.  The host must reconnect, verify PING/INFO, and issue
 UPDATE_CONFIRM.  Confirmation removes only the marker, not the fallback.
+An UPDATE request is rejected as BUSY while a marker already exists. Explicit
+rollback swaps the fallback into place, acknowledges, and makes the launcher
+invoke that restored agent immediately.

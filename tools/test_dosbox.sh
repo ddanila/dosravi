@@ -4,8 +4,9 @@ set -euo pipefail
 project_root=$(cd "$(dirname "$0")/.." && pwd)
 agent="$project_root/build/dos/DOSRAVI.COM"
 probe="$project_root/build/dos/COMPROBE.COM"
+next_agent="$project_root/build/dos/DOSNEXT.COM"
 
-[[ -f "$agent" && -f "$probe" ]] || {
+[[ -f "$agent" && -f "$probe" && -f "$next_agent" ]] || {
     echo "DOS programs are missing; run make dos" >&2
     exit 1
 }
@@ -38,11 +39,16 @@ test_boot_rollback() {
 
 run_cpu() {
     local cpu=$1
-    local drive="$test_root/$cpu"
+    local mount="$test_root/$cpu"
+    local drive="$mount/RAVI"
     mkdir -p "$drive"
     cp "$agent" "$drive/DOSRAVI.COM"
+    cp "$next_agent" "$drive/DOSNEXT.COM"
     cp "$probe" "$drive/COMPROBE.COM"
+    cp "$project_root/dos/RAVILOAD.BAT" "$drive/RAVILOAD.BAT"
     nasm -f bin "$project_root/tests/HELLO.ASM" -o "$drive/HELLO.COM"
+    nasm -f bin "$project_root/tests/SLOW.ASM" -o "$drive/SLOW.COM"
+    nasm -f bin "$project_root/tests/STDIN.ASM" -o "$drive/STDIN.COM"
     local port
     port=$(python3 - <<'PY'
 import socket
@@ -70,13 +76,13 @@ PY
         -set "cpu cycles=max" \
         -set "midi mididevice=none" \
         -set "serial serial1=nullmodem server:127.0.0.1 port:$port transparent:1 telnet:0 usedtr:0 rxdelay:0 txdelay:0" \
-        -c "mount c $drive" \
+        -c "mount c $mount" \
         -c "c:" \
+        -c "CD \\RAVI" \
         -c "COMPROBE > PROBE.TXT" \
         -c "ECHO READY>READY.FLG" \
-        -c "DOSRAVI /COM1 /BAUD:38400 /ROOT:. > AGENT.TXT" \
-        -c "DOSRAVI /COM1 /BAUD:38400 /ROOT:. >> AGENT.TXT" \
-        -c "exit" >"$drive/DOSBOX.OUT" 2>&1 &
+        -c "CALL RAVILOAD.BAT" \
+        -c "exit" >"$mount/DOSBOX.OUT" 2>&1 &
     local dosbox_pid=$!
     set +e
     timeout 60s tail --pid="$host_pid" -f /dev/null
@@ -94,7 +100,7 @@ PY
         if [[ -f "$drive/AGENT.TXT" ]]; then
             sed -n '1,120p' "$drive/AGENT.TXT" >&2
         fi
-        sed -n '1,240p' "$drive/DOSBOX.OUT" >&2
+        sed -n '1,240p' "$mount/DOSBOX.OUT" >&2
         return 1
     fi
     grep -q 'COM1: base' "$drive/PROBE.TXT"

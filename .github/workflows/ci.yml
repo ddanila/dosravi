@@ -10,7 +10,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: sudo apt-get update && sudo apt-get install -y bcc bin86 cppcheck nasm
+      - run: sudo apt-get update && sudo apt-get install -y afl++ bcc bin86 clang cppcheck nasm
       - run: python -m pip install -e '.[test]'
       - run: make check
+      - run: make fuzz
       - run: make dos

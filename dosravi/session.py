@@ -43,6 +43,20 @@ def source_commit() -> str | None:
         return None
 
 
+def source_dirty() -> bool | None:
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=normal"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=2,
+        )
+        return bool(result.stdout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 @dataclass
 class Artifact:
     name: str
@@ -57,6 +71,7 @@ class SessionRecord:
     started_utc: str
     host_version: str
     source_commit: str | None
+    source_dirty: bool | None
     transport: dict[str, Any]
     negotiated: dict[str, Any] = field(default_factory=dict)
     command_line: list[str] = field(default_factory=list)
@@ -66,6 +81,7 @@ class SessionRecord:
     serial_stats: dict[str, Any] = field(default_factory=dict)
     programmer_stats: dict[str, Any] = field(default_factory=dict)
     exit_status: int | None = None
+    error: str | None = None
     completed_utc: str | None = None
 
     @classmethod
@@ -77,6 +93,7 @@ class SessionRecord:
             started_utc=datetime.now(timezone.utc).isoformat(),
             host_version=host_version,
             source_commit=source_commit(),
+            source_dirty=source_dirty(),
             transport=transport,
         )
 
@@ -143,7 +160,10 @@ def validate_read_images(
     }
 
 
-def parse_willem_log(path: Path) -> dict[str, Any]:
+def parse_willem_log(
+    path: Path,
+    expected_profile: str | None = None,
+) -> dict[str, Any]:
     """Read the last structured local-timing record from WILLEM.LOG."""
 
     text = path.read_text(encoding="ascii", errors="replace")
@@ -159,20 +179,100 @@ def parse_willem_log(path: Path) -> dict[str, Any]:
     match = matches[-1]
     if "Safe shutdown complete: VCC off, VPP off" not in text[match.start() :]:
         raise ValueError("WILLEM.LOG does not prove safe shutdown after the timed read")
-    return {
+    result: dict[str, Any] = {
         "read_ms": int(match.group(1)),
         "profile": match.group(2),
         "safe_shutdown": True,
     }
+    if expected_profile is not None:
+        if match.group(2) != expected_profile:
+            raise ValueError(
+                f"WILLEM.LOG profile {match.group(2)!r} does not match "
+                f"requested {expected_profile!r}"
+            )
+        profile_matches = list(
+            re.finditer(
+                r"DOSRAVI_PROFILE\s+name=([A-Za-z0-9_-]+)"
+                r"\s+address_setup_us=(\d+)\s+oe_settle_us=(\d+)"
+                r"\s+input_latch_us=(\d+)\s+input_clock_us=(\d+)"
+                r"\s+power_on_ms=(\d+)\s+build_id=([A-Za-z0-9_.-]+)",
+                text[: match.start()],
+            )
+        )
+        if not profile_matches or profile_matches[-1].group(1) != expected_profile:
+            raise ValueError("WILLEM.LOG lacks exact parameters for requested profile")
+        profile_match = profile_matches[-1]
+        result["parameters"] = {
+            "address_setup_us": int(profile_match.group(2)),
+            "oe_settle_us": int(profile_match.group(3)),
+            "input_latch_us": int(profile_match.group(4)),
+            "input_clock_us": int(profile_match.group(5)),
+            "power_on_ms": int(profile_match.group(6)),
+            "build_id": profile_match.group(7),
+        }
+    return result
 
 
-def parse_willem_write_log(path: Path) -> dict[str, int | bool]:
+def parse_legacy_willem_log(path: Path, expected_device: str) -> dict[str, Any]:
+    """Parse the last unmodified Willem 0.0.5 run for an M4 baseline."""
+
+    text = path.read_text(encoding="ascii", errors="replace")
+    begin = text.rfind("================ BEGIN RUN ================")
+    if begin < 0:
+        raise ValueError("WILLEM.LOG has no legacy BEGIN RUN marker")
+    run = text[begin:]
+    if "================= END RUN =================" not in run:
+        raise ValueError("last legacy Willem run is incomplete")
+    operation = re.search(
+        r"Operation=READ\s+device=([A-Za-z0-9_-]+).*\s+trace=(on|off)", run
+    )
+    if not operation or operation.group(1).upper() != expected_device.upper():
+        raise ValueError("last legacy Willem run is not the requested read")
+    if operation.group(2) != "off":
+        raise ValueError("legacy speed baseline cannot use full tracing")
+    if not re.search(r"Read complete: bytes=8192 CRC16-CCITT=[0-9A-Fa-f]{4}", run):
+        raise ValueError("legacy Willem run lacks a complete 8192-byte read")
+    timestamp_pattern = r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{2})\]"
+    powered = re.search(
+        timestamp_pattern + r" Power transition: enabling VCC, VPP off", run
+    )
+    shutdown = re.search(
+        timestamp_pattern + r" Safe shutdown complete: VCC off, VPP off", run
+    )
+    if not powered or not shutdown or shutdown.start() <= powered.start():
+        raise ValueError("legacy Willem run lacks ordered power/safe-shutdown evidence")
+    timestamp_format = "%Y-%m-%d %H:%M:%S.%f"
+    started = datetime.strptime(powered.group(1), timestamp_format).replace(
+        tzinfo=timezone.utc
+    )
+    finished = datetime.strptime(shutdown.group(1), timestamp_format).replace(
+        tzinfo=timezone.utc
+    )
+    elapsed_ms = round((finished - started).total_seconds() * 1000)
+    if elapsed_ms <= 0:
+        raise ValueError("legacy Willem read window is not positive")
+    version = re.search(r"Willem V30 version ([^;\s]+)", run)
+    return {
+        "read_ms": elapsed_ms,
+        "profile": "legacy-current",
+        "safe_shutdown": True,
+        "timing_source": "DOS timestamped power-on-to-safe-shutdown window",
+        "willem_version": version.group(1) if version else None,
+    }
+
+
+def parse_willem_write_log(
+    path: Path,
+    expected_image_crc32: str | None = None,
+) -> dict[str, int | bool | str]:
     text = path.read_text(encoding="ascii", errors="replace")
     matches = list(
         re.finditer(
             r"DOSRAVI_WRITE_METRIC\s+program_ms=(\d+)\s+verify_ms=(\d+)"
             r"\s+changed=(\d+)\s+unchanged=(\d+)\s+retry_bytes=(\d+)"
-            r"\s+retries=(\d+)\s+late=(\d+)",
+            r"\s+retries=(\d+)\s+late=(\d+)"
+            r"\s+image_crc32=([0-9a-fA-F]{8})"
+            r"\s+build_id=([A-Za-z0-9_.-]+)",
             text,
         )
     )
@@ -181,7 +281,7 @@ def parse_willem_write_log(path: Path) -> dict[str, int | bool]:
     match = matches[-1]
     if "Safe shutdown complete: VCC off, VPP off" not in text[match.start() :]:
         raise ValueError("WILLEM.LOG does not prove safe shutdown after programming")
-    names = (
+    integer_names = (
         "program_ms",
         "verify_ms",
         "changed",
@@ -190,8 +290,14 @@ def parse_willem_write_log(path: Path) -> dict[str, int | bool]:
         "retries",
         "late",
     )
-    result: dict[str, int | bool] = {
-        name: int(value) for name, value in zip(names, match.groups())
+    result: dict[str, int | bool | str] = {
+        name: int(value) for name, value in zip(integer_names, match.groups()[:7])
     }
+    image_crc32 = match.group(8).lower()
+    build_id = match.group(9)
+    if expected_image_crc32 is not None and image_crc32 != expected_image_crc32.lower():
+        raise ValueError("WILLEM.LOG write image identity does not match request")
+    result["image_crc32"] = image_crc32
+    result["build_id"] = build_id
     result["safe_shutdown"] = True
     return result

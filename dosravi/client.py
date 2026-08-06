@@ -71,6 +71,7 @@ class Client:
         timeout: float = 1.0,
         retries: int = 5,
         event: Callable[[dict[str, object]], None] | None = None,
+        exec_timeout: float = 300.0,
     ):
         self.transport = transport
         self.timeout = timeout
@@ -78,6 +79,7 @@ class Client:
         self.decoder = FrameDecoder()
         self.next_transaction = secrets.randbits(32) or 1
         self.event = event or (lambda _: None)
+        self.exec_timeout = exec_timeout
 
     def close(self) -> None:
         self.transport.close()
@@ -130,6 +132,8 @@ class Client:
                                 "message": message,
                             }
                         )
+                        if command == Command.EXEC and message == "STARTED":
+                            deadline = time.monotonic() + self.exec_timeout
                         continue
                     if (
                         received.frame_type != FrameType.RESPONSE
@@ -167,8 +171,23 @@ class Client:
         return json.loads(first(values, Tag.JSON))
 
     def list(self) -> list[dict[str, object]]:
-        values = self.request(Command.LIST)
-        return json.loads(first(values, Tag.JSON))
+        listing: list[dict[str, object]] = []
+        offset = 0
+        while True:
+            values = self.request(Command.LIST, tlv_u32(Tag.OFFSET, offset))
+            page = json.loads(first(values, Tag.JSON))
+            if not isinstance(page, list):
+                raise RemoteError(Command.LIST, Status.INTERNAL, "LIST is not an array")
+            listing.extend(page)
+            next_values = values.get(int(Tag.OFFSET))
+            if not next_values:
+                return listing
+            next_offset = as_u32(next_values[0])
+            if next_offset <= offset:
+                raise RemoteError(
+                    Command.LIST, Status.OFFSET_MISMATCH, "LIST did not advance"
+                )
+            offset = next_offset
 
     def crc(self, remote: str) -> tuple[int, int]:
         values = self.request(Command.CRC, tlv_text(Tag.PATH, remote))
@@ -238,55 +257,81 @@ class Client:
         self, remote: str, local: str | Path, chunk_size: int = 512
     ) -> TransferStats:
         destination = Path(local)
+        destination.parent.mkdir(parents=True, exist_ok=True)
         temporary = destination.with_name(destination.name + ".part")
-        offset = temporary.stat().st_size if temporary.exists() else 0
-        crc = 0
-        if offset:
-            with temporary.open("rb") as stream:
-                while chunk := stream.read(65536):
-                    crc = file_crc32(chunk, crc)
         started = time.monotonic()
-        size: int | None = None
-        expected: int | None = None
-        with temporary.open("ab") as stream:
-            while size is None or offset < size:
-                values = self.request(
-                    Command.GET,
-                    tlv_text(Tag.PATH, remote),
-                    tlv_u32(Tag.OFFSET, offset),
-                    tlv_u32(Tag.CHUNK_SIZE, chunk_size),
-                )
-                size = as_u32(first(values, Tag.SIZE))
-                expected = as_u32(first(values, Tag.CRC32))
-                response_offset = as_u32(first(values, Tag.OFFSET))
-                chunk = first(values, Tag.DATA, b"")
-                if response_offset != offset or offset + len(chunk) > size:
-                    raise RemoteError(Command.GET, Status.OFFSET_MISMATCH)
-                if not chunk and offset < size:
-                    raise RemoteError(
-                        Command.GET, Status.IO_ERROR, "empty non-final chunk"
-                    )
-                stream.write(chunk)
-                stream.flush()
-                crc = file_crc32(chunk, crc)
-                offset += len(chunk)
-        if expected is None or size is None or offset != size or crc != expected:
-            raise RemoteError(Command.GET, Status.CRC_MISMATCH)
-        temporary.replace(destination)
-        return TransferStats(size, time.monotonic() - started, crc)
+        for restart in range(2):
+            offset = temporary.stat().st_size if temporary.exists() else 0
+            crc = 0
+            if offset:
+                with temporary.open("rb") as stream:
+                    while chunk := stream.read(65536):
+                        crc = file_crc32(chunk, crc)
+            size: int | None = None
+            expected: int | None = None
+            try:
+                with temporary.open("ab") as stream:
+                    while size is None or offset < size:
+                        values = self.request(
+                            Command.GET,
+                            tlv_text(Tag.PATH, remote),
+                            tlv_u32(Tag.OFFSET, offset),
+                            tlv_u32(Tag.CHUNK_SIZE, chunk_size),
+                        )
+                        size = as_u32(first(values, Tag.SIZE))
+                        expected = as_u32(first(values, Tag.CRC32))
+                        response_offset = as_u32(first(values, Tag.OFFSET))
+                        chunk = first(values, Tag.DATA, b"")
+                        if response_offset != offset or offset + len(chunk) > size:
+                            raise RemoteError(Command.GET, Status.OFFSET_MISMATCH)
+                        if not chunk and offset < size:
+                            raise RemoteError(
+                                Command.GET, Status.IO_ERROR, "empty non-final chunk"
+                            )
+                        stream.write(chunk)
+                        stream.flush()
+                        crc = file_crc32(chunk, crc)
+                        offset += len(chunk)
+            except RemoteError as exc:
+                if exc.status != Status.OFFSET_MISMATCH or restart:
+                    raise
+            else:
+                if (
+                    expected is not None
+                    and size is not None
+                    and offset == size
+                    and crc == expected
+                    and self.crc(remote) == (size, expected)
+                ):
+                    temporary.replace(destination)
+                    return TransferStats(size, time.monotonic() - started, crc)
+            if restart == 0:
+                temporary.unlink(missing_ok=True)
+                continue
+            raise RemoteError(
+                Command.GET,
+                Status.CRC_MISMATCH,
+                "download did not match a stable remote file",
+            )
 
     def execute(
-        self, program: str, args: str = "", execution_id: int | None = None
+        self,
+        program: str,
+        args: str = "",
+        execution_id: int | None = None,
+        stdin_path: str | None = None,
     ) -> ExecResult:
         if "." not in program and 1 <= len(program) <= 8:
             program += ".COM"
         exec_id = execution_id if execution_id is not None else secrets.randbits(32)
-        values = self.request(
-            Command.EXEC,
+        fields = [
             tlv_text(Tag.PATH, program),
             tlv_text(Tag.ARGS, args),
             tlv_u32(Tag.EXEC_ID, exec_id),
-        )
+        ]
+        if stdin_path is not None:
+            fields.append(tlv_text(Tag.STDIN, stdin_path))
+        values = self.request(Command.EXEC, *fields)
         return ExecResult(
             execution_id=exec_id,
             exit_code=as_u32(first(values, Tag.EXIT_CODE)),

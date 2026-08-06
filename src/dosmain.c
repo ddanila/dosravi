@@ -12,12 +12,14 @@
 #undef rindex
 #endif
 
+#ifndef AGENT_VERSION
 #define AGENT_VERSION "0.1.0"
+#endif
 #define DEFAULT_BAUD 38400UL
 #define DEFAULT_CHUNK 512U
 #define MAX_CHUNK 1024U
 #define MAX_PATH 12
-#define CACHE_COUNT 6
+#define CACHE_COUNT 3
 #define CACHE_PAYLOAD 1200
 #define EXEC_CACHE_COUNT 4
 
@@ -62,6 +64,7 @@
 #define TAG_MESSAGE 12
 #define TAG_CHUNK_SIZE 13
 #define TAG_ELAPSED_MS 14
+#define TAG_STDIN 16
 
 extern unsigned dr_uart_bios_base(unsigned index);
 extern void dr_uart_save(unsigned base, unsigned char *state);
@@ -75,7 +78,8 @@ extern void dr_uart_drain(unsigned base);
 struct replay_entry {
     int valid;
     dr_u32 transaction;
-    dr_u16 request_crc;
+    dr_u16 request_length;
+    dr_u8 request_payload[CACHE_PAYLOAD];
     dr_u16 length;
     dr_u8 payload[CACHE_PAYLOAD];
 };
@@ -83,9 +87,11 @@ struct replay_entry {
 struct execution_entry {
     int valid;
     dr_u32 execution_id;
-    dr_u16 request_crc;
     dr_u32 exit_code;
     dr_u32 elapsed_ms;
+    char program[13];
+    char arguments[127];
+    char stdin_name[13];
     char stdout_name[13];
     char stderr_name[13];
 };
@@ -117,9 +123,11 @@ static unsigned replay_next;
 static unsigned execution_next;
 static unsigned uart_base;
 static unsigned uart_capability;
-static unsigned char uart_state[6];
+static unsigned char uart_state[7];
 static int running;
 static int requested_exit;
+
+static void send_exec_started();
 
 static dr_u16 get16(data)
 const dr_u8 *data;
@@ -293,6 +301,16 @@ char *path;
     return 0;
 }
 
+static int protected_control_path(path)
+char *path;
+{
+    return same_text(path, "DOSRAVI.COM") ||
+           same_text(path, "DOSRAVI.OLD") ||
+           same_text(path, "DOSRAVI.BAD") ||
+           same_text(path, "UPDATE.PND") ||
+           same_text(path, "RAVILOAD.BAT");
+}
+
 static int valid_path_bytes(value, length, output)
 const dr_u8 *value;
 dr_u16 length;
@@ -354,6 +372,17 @@ char *meta;
     }
     sprintf(part, "%04X%04X.RVP", high, low);
     sprintf(meta, "%04X%04X.RVM", high, low);
+}
+
+static void transfer_backup(path, backup)
+char *path;
+char *backup;
+{
+    char part[13];
+    char meta[13];
+    transfer_names(path, part, meta);
+    strcpy(backup, meta);
+    backup[11] = 'B';
 }
 
 static int file_identity(path, size, crc)
@@ -510,59 +539,79 @@ dr_u32 *exit_code;
     return 0;
 }
 
-static int execute_captured(program, arguments, stdout_name, stderr_name, exit_code, elapsed)
+static int execute_captured(program, arguments, stdin_name, stdout_name, stderr_name,
+                            exit_code, elapsed, execution_id)
 char *program;
 char *arguments;
+char *stdin_name;
 char *stdout_name;
 char *stderr_name;
 dr_u32 *exit_code;
 dr_u32 *elapsed;
+dr_u32 execution_id;
 {
+    FILE *in_file;
     FILE *out_file;
     FILE *err_file;
+    int saved_in;
     int saved_out;
     int saved_err;
     int result;
     dr_u32 started;
     fflush(stdout);
     fflush(stderr);
+    saved_in = -1;
+    if (stdin_name[0]) saved_in = dos_duplicate(0);
     saved_out = dos_duplicate(1);
     saved_err = dos_duplicate(2);
-    if (saved_out < 0 || saved_err < 0) {
+    if ((stdin_name[0] && saved_in < 0) || saved_out < 0 || saved_err < 0) {
+        if (saved_in >= 0) dos_close(saved_in);
         if (saved_out >= 0) dos_close(saved_out);
         if (saved_err >= 0) dos_close(saved_err);
         return -1;
     }
+    in_file = stdin_name[0] ? fopen(stdin_name, "rb") : 0;
     out_file = fopen(stdout_name, "wb");
     err_file = fopen(stderr_name, "wb");
-    if (!out_file || !err_file) {
+    if ((stdin_name[0] && !in_file) || !out_file || !err_file) {
+        if (in_file) fclose(in_file);
         if (out_file) fclose(out_file);
         if (err_file) fclose(err_file);
+        if (saved_in >= 0) dos_close(saved_in);
         dos_close(saved_out);
         dos_close(saved_err);
         return -1;
     }
-    if (dos_force_duplicate(fileno(out_file), 1) ||
+    if ((in_file && dos_force_duplicate(fileno(in_file), 0)) ||
+        dos_force_duplicate(fileno(out_file), 1) ||
         dos_force_duplicate(fileno(err_file), 2)) {
+        if (in_file) fclose(in_file);
         fclose(out_file);
         fclose(err_file);
+        if (saved_in >= 0) dos_force_duplicate(saved_in, 0);
         dos_force_duplicate(saved_out, 1);
         dos_force_duplicate(saved_err, 2);
+        if (saved_in >= 0) dos_close(saved_in);
         dos_close(saved_out);
         dos_close(saved_err);
         return -1;
     }
+    if (in_file) fclose(in_file);
     fclose(out_file);
     fclose(err_file);
+    send_exec_started(execution_id);
     started = bios_milliseconds();
     result = dos_exec(program, arguments, exit_code);
     *elapsed = bios_milliseconds() - started;
+    if (saved_in >= 0) dos_force_duplicate(saved_in, 0);
     dos_force_duplicate(saved_out, 1);
     dos_force_duplicate(saved_err, 2);
+    if (saved_in >= 0) dos_close(saved_in);
     dos_close(saved_out);
     dos_close(saved_err);
     clearerr(stdout);
     clearerr(stderr);
+    clearerr(stdin);
     return result;
 }
 
@@ -634,7 +683,8 @@ static void handle_info()
             "\"protocol\":1,\"dos\":\"%u.%u\",\"com_base\":%u,"
             "\"uart_fifo_bits\":%u,\"free_memory\":%lu,"
             "\"free_disk\":%lu,\"chunk_size\":%u,"
-            "\"capabilities\":[\"replay\",\"resume\",\"exec-capture\"]}",
+            "\"capabilities\":[\"replay\",\"resume\",\"exec-capture\","
+            "\"self-update\"]}",
             AGENT_VERSION, dos_major, dos_minor, uart_base, uart_capability,
             free_memory, free_bytes, DEFAULT_CHUNK);
     response_begin(CMD_INFO, STATUS_OK);
@@ -671,7 +721,9 @@ int next;
     return output.x.cflag ? -1 : 0;
 }
 
-static void handle_list()
+static void handle_list(fields, length)
+const dr_u8 *fields;
+dr_u16 length;
 {
     static dr_u8 dta[64];
     static char listing[1050];
@@ -679,36 +731,48 @@ static void handle_list()
     char *name;
     dr_u32 size;
     int first_item;
-    int truncated;
+    int more;
+    dr_u32 start;
+    dr_u32 file_index;
+    if (length == 0) start = 0;
+    else if (!required_u32(TAG_OFFSET, fields, length, &start)) {
+        error_response(CMD_LIST, STATUS_BAD_REQUEST, "invalid LIST offset");
+        return;
+    }
     set_dta((unsigned)dta, __get_ds());
     strcpy(listing, "[");
     first_item = 1;
-    truncated = 0;
+    more = 0;
+    file_index = 0;
     if (find_file("*.*", 0x27U, 0) == 0) {
         do {
             name = (char *)(dta + 30);
             size = get32(dta + 26);
             if (!(dta[21] & 0x10U) &&
-                !strstr(name, ".RVP") && !strstr(name, ".RVM")) {
-                sprintf(item, "%s{\"name\":\"%s\",\"size\":%lu}",
-                        first_item ? "" : ",", name, size);
-                if (strlen(listing) + strlen(item) + 2 >= sizeof(listing)) {
-                    truncated = 1;
-                    break;
+                !strstr(name, ".RVP") && !strstr(name, ".RVM") &&
+                !strstr(name, ".RVB") && !same_text(name, "UPDATE.PND")) {
+                if (file_index >= start) {
+                    sprintf(item, "%s{\"name\":\"%s\",\"size\":%lu}",
+                            first_item ? "" : ",", name, size);
+                    if (strlen(listing) + strlen(item) + 2 >= sizeof(listing)) {
+                        more = 1;
+                        break;
+                    }
+                    strcat(listing, item);
+                    first_item = 0;
                 }
-                strcat(listing, item);
-                first_item = 0;
+                ++file_index;
             }
         } while (find_file("*.*", 0x27U, 1) == 0);
     }
     strcat(listing, "]");
     set_dta(0x80U, __psp);
-    if (truncated) {
-        error_response(CMD_LIST, STATUS_IO_ERROR, "workspace listing exceeds v0.1 DOS limit");
-        return;
-    }
     response_begin(CMD_LIST, STATUS_OK);
     response_text(TAG_JSON, listing);
+    if (more) {
+        response_frame.flags = 1;
+        response_u32(TAG_OFFSET, file_index);
+    }
 }
 
 static void handle_put_begin(fields, length)
@@ -718,6 +782,7 @@ dr_u16 length;
     char path[13];
     char part[13];
     char meta_name[13];
+    char backup[13];
     struct upload_meta expected;
     struct upload_meta existing;
     FILE *file;
@@ -728,9 +793,15 @@ dr_u16 length;
         error_response(CMD_PUT_BEGIN, STATUS_BAD_REQUEST, "invalid PUT_BEGIN fields");
         return;
     }
+    if (protected_control_path(path)) {
+        error_response(CMD_PUT_BEGIN, STATUS_DENIED,
+                       "control file requires the update/installer path");
+        return;
+    }
     memcpy(expected.magic, "RVM1", 4);
     strcpy(expected.path, path);
     transfer_names(path, part, meta_name);
+    transfer_backup(path, backup);
     file = fopen(meta_name, "rb");
     if (!file || fread(&existing, 1, sizeof(existing), file) != sizeof(existing) ||
         memcmp(&existing, &expected, sizeof(existing))) {
@@ -745,6 +816,21 @@ dr_u16 length;
         }
     }
     fclose(file);
+    file = fopen(path, "rb");
+    if (file) {
+        fclose(file);
+        dos_remove(backup);
+    } else {
+        file = fopen(backup, "rb");
+        if (file) {
+            fclose(file);
+            if (dos_rename(backup, path)) {
+                error_response(CMD_PUT_BEGIN, STATUS_IO_ERROR,
+                               "cannot restore interrupted destination");
+                return;
+            }
+        }
+    }
     file = fopen(part, "rb");
     if (file) {
         fseek(file, 0L, SEEK_END);
@@ -776,6 +862,11 @@ dr_u16 length;
         find_tlv(TAG_DATA, fields, length, &data, &data_length) != 1 ||
         data_length > MAX_CHUNK) {
         error_response(CMD_PUT_DATA, STATUS_BAD_REQUEST, "invalid PUT_DATA fields");
+        return;
+    }
+    if (protected_control_path(path)) {
+        error_response(CMD_PUT_DATA, STATUS_DENIED,
+                       "control file requires the update/installer path");
         return;
     }
     transfer_names(path, part, meta_name);
@@ -810,17 +901,27 @@ dr_u16 length;
     char path[13];
     char part[13];
     char meta_name[13];
+    char backup[13];
     dr_u32 expected_size;
     dr_u32 expected_crc;
     dr_u32 actual_size;
     dr_u32 actual_crc;
+    dr_u32 previous_size;
+    dr_u32 previous_crc;
+    int had_previous;
     if (!required_path(fields, length, path) ||
         !required_u32(TAG_SIZE, fields, length, &expected_size) ||
         !required_u32(TAG_CRC32, fields, length, &expected_crc)) {
         error_response(CMD_PUT_COMMIT, STATUS_BAD_REQUEST, "invalid PUT_COMMIT fields");
         return;
     }
+    if (protected_control_path(path)) {
+        error_response(CMD_PUT_COMMIT, STATUS_DENIED,
+                       "control file requires the update/installer path");
+        return;
+    }
     transfer_names(path, part, meta_name);
+    transfer_backup(path, backup);
     if (!file_identity(part, &actual_size, &actual_crc)) {
         error_response(CMD_PUT_COMMIT, STATUS_NOT_FOUND, "upload temporary missing");
         return;
@@ -831,11 +932,21 @@ dr_u16 length;
         response_u32(TAG_CRC32, actual_crc);
         return;
     }
-    dos_remove(path);
+    had_previous = file_identity(path, &previous_size, &previous_crc);
+    if (had_previous) {
+        dos_remove(backup);
+        if (dos_rename(path, backup)) {
+            error_response(CMD_PUT_COMMIT, STATUS_IO_ERROR,
+                           "cannot preserve previous destination");
+            return;
+        }
+    }
     if (dos_rename(part, path)) {
+        dos_rename(backup, path);
         error_response(CMD_PUT_COMMIT, STATUS_IO_ERROR, "verified upload rename failed");
         return;
     }
+    dos_remove(backup);
     dos_remove(meta_name);
     response_begin(CMD_PUT_COMMIT, STATUS_OK);
     response_u32(TAG_SIZE, actual_size);
@@ -921,6 +1032,11 @@ dr_u16 length;
         error_response(CMD_REMOVE, STATUS_DENIED, "invalid workspace path");
         return;
     }
+    if (protected_control_path(path) || same_text(path, "DOSRAVI.NEW")) {
+        error_response(CMD_REMOVE, STATUS_DENIED,
+                       "agent control files cannot be removed remotely");
+        return;
+    }
     file = fopen(path, "rb");
     if (!file) {
         error_response(CMD_REMOVE, STATUS_NOT_FOUND, "file not found");
@@ -963,12 +1079,20 @@ dr_u16 length;
     dr_u32 expected_crc;
     dr_u32 actual_size;
     dr_u32 actual_crc;
+    FILE *pending;
     if (!required_path(fields, length, path) ||
         !same_text(path, "DOSRAVI.NEW") ||
         !required_u32(TAG_SIZE, fields, length, &expected_size) ||
         !required_u32(TAG_CRC32, fields, length, &expected_crc)) {
         error_response(CMD_UPDATE, STATUS_BAD_REQUEST,
                        "UPDATE requires verified DOSRAVI.NEW");
+        return;
+    }
+    pending = fopen("UPDATE.PND", "rb");
+    if (pending) {
+        fclose(pending);
+        error_response(CMD_UPDATE, STATUS_BUSY,
+                       "an agent update already awaits confirmation");
         return;
     }
     if (!file_identity(path, &actual_size, &actual_crc)) {
@@ -1054,16 +1178,18 @@ char *path;
     return extension && (same_text(extension, ".COM") || same_text(extension, ".EXE"));
 }
 
-static void handle_exec(fields, length, request_crc)
+static void handle_exec(fields, length)
 const dr_u8 *fields;
 dr_u16 length;
-dr_u16 request_crc;
 {
     char path[13];
     char arguments[127];
+    char stdin_name[13];
     const dr_u8 *argument_data;
+    const dr_u8 *stdin_data;
     static const dr_u8 empty_arguments[] = "";
     dr_u16 argument_length;
+    dr_u16 stdin_length;
     dr_u32 execution_id;
     struct execution_entry *entry;
     int result;
@@ -1080,9 +1206,18 @@ dr_u16 request_crc;
     }
     memcpy(arguments, argument_data, argument_length);
     arguments[argument_length] = 0;
+    stdin_name[0] = 0;
+    result = find_tlv(TAG_STDIN, fields, length, &stdin_data, &stdin_length);
+    if (result < 0 ||
+        (result == 1 && !valid_path_bytes(stdin_data, stdin_length, stdin_name))) {
+        error_response(CMD_EXEC, STATUS_BAD_REQUEST, "invalid EXEC stdin path");
+        return;
+    }
     entry = find_execution(execution_id);
     if (entry) {
-        if (entry->request_crc != request_crc) {
+        if (!same_text(entry->program, path) ||
+            strcmp(entry->arguments, arguments) ||
+            !same_text(entry->stdin_name, stdin_name)) {
             error_response(CMD_EXEC, STATUS_BAD_REQUEST, "execution ID reused for different command");
             return;
         }
@@ -1092,17 +1227,25 @@ dr_u16 request_crc;
     entry = &execution_cache[execution_next++ % EXEC_CACHE_COUNT];
     memset(entry, 0, sizeof(*entry));
     entry->execution_id = execution_id;
-    entry->request_crc = request_crc;
+    strcpy(entry->program, path);
+    strcpy(entry->arguments, arguments);
+    strcpy(entry->stdin_name, stdin_name);
     sprintf(entry->stdout_name, "O%02X%04X.OUT",
             (unsigned)((execution_id >> 16) & 0xffUL),
             (unsigned)(execution_id & 0xffffUL));
     sprintf(entry->stderr_name, "E%02X%04X.ERR",
             (unsigned)((execution_id >> 16) & 0xffUL),
             (unsigned)(execution_id & 0xffffUL));
-    send_exec_started(execution_id);
-    result = execute_captured(path, arguments, entry->stdout_name,
+    if (stdin_name[0] &&
+        (same_text(stdin_name, entry->stdout_name) ||
+         same_text(stdin_name, entry->stderr_name))) {
+        error_response(CMD_EXEC, STATUS_BAD_REQUEST,
+                       "EXEC stdin collides with capture file");
+        return;
+    }
+    result = execute_captured(path, arguments, stdin_name, entry->stdout_name,
                               entry->stderr_name, &entry->exit_code,
-                              &entry->elapsed_ms);
+                              &entry->elapsed_ms, execution_id);
     if (result) {
         error_response(CMD_EXEC, STATUS_IO_ERROR, "DOS EXEC or capture failed");
         return;
@@ -1111,8 +1254,7 @@ dr_u16 request_crc;
     execution_response(entry);
 }
 
-static void dispatch_request(request_crc)
-dr_u16 request_crc;
+static void dispatch_request()
 {
     int command;
     const dr_u8 *fields;
@@ -1127,14 +1269,14 @@ dr_u16 request_crc;
     switch (command) {
     case CMD_PING: handle_ping(); break;
     case CMD_INFO: handle_info(); break;
-    case CMD_LIST: handle_list(); break;
+    case CMD_LIST: handle_list(fields, length); break;
     case CMD_PUT_BEGIN: handle_put_begin(fields, length); break;
     case CMD_PUT_DATA: handle_put_data(fields, length); break;
     case CMD_PUT_COMMIT: handle_put_commit(fields, length); break;
     case CMD_GET: handle_get(fields, length); break;
     case CMD_CRC: handle_crc(fields, length); break;
     case CMD_REMOVE: handle_remove(fields, length); break;
-    case CMD_EXEC: handle_exec(fields, length, request_crc); break;
+    case CMD_EXEC: handle_exec(fields, length); break;
     case CMD_UPDATE: handle_update(fields, length); break;
     case CMD_UPDATE_CONFIRM: handle_update_confirm(); break;
     case CMD_UPDATE_ROLLBACK: handle_update_rollback(); break;
@@ -1160,12 +1302,20 @@ dr_u32 transaction;
 static void process_frame()
 {
     struct replay_entry *entry;
-    dr_u16 request_crc;
     if (request_frame.type != DR_FRAME_REQUEST) return;
-    request_crc = dr_crc16(request_frame.payload, request_frame.payload_length);
+    if (request_frame.transaction == 0 || request_frame.sequence != 0 ||
+        request_frame.flags != 0 ||
+        request_frame.payload_length > CACHE_PAYLOAD) {
+        error_response(request_frame.payload_length ? request_frame.payload[0] : CMD_PING,
+                       STATUS_BAD_REQUEST, "invalid v0.1 request header or size");
+        uart_send(&response_frame);
+        return;
+    }
     entry = find_replay(request_frame.transaction);
     if (entry) {
-        if (entry->request_crc != request_crc) {
+        if (entry->request_length != request_frame.payload_length ||
+            memcmp(entry->request_payload, request_frame.payload,
+                   request_frame.payload_length)) {
             error_response(request_frame.payload_length ? request_frame.payload[0] : CMD_PING,
                            STATUS_BAD_REQUEST,
                            "transaction ID reused for different request");
@@ -1182,13 +1332,15 @@ static void process_frame()
         uart_send(&response_frame);
         return;
     }
-    dispatch_request(request_crc);
+    dispatch_request();
     uart_send(&response_frame);
     if (response_frame.payload_length <= CACHE_PAYLOAD) {
         entry = &replay_cache[replay_next++ % CACHE_COUNT];
         entry->valid = 1;
         entry->transaction = request_frame.transaction;
-        entry->request_crc = request_crc;
+        entry->request_length = request_frame.payload_length;
+        memcpy(entry->request_payload, request_frame.payload,
+               entry->request_length);
         entry->length = response_frame.payload_length;
         memcpy(entry->payload, response_frame.payload, entry->length);
     }

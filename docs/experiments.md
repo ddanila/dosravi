@@ -27,6 +27,25 @@ accept arbitrary write pulse or VPP values.  `dosravi willem-sweep` takes a
 comma-separated conservative-to-aggressive list and implements the sweep,
 drift check, and one-step-slower production selection rules above.
 
+The pre-profile M4 baseline is the sole exception. `--legacy-current` parses
+the last complete unmodified Willem 0.0.5 append-log run, requires READ of the
+requested device with tracing off, an 8,192-byte completion, and ordered safe
+shutdown, and measures the local DOS timestamp window from VCC enable through
+shutdown. This coarse logging-inclusive value is never presented as an M5
+optimized programmer rate.
+
+Each profiled read must precede its metric with one exact audited record:
+
+```text
+DOSRAVI_PROFILE name=NAME address_setup_us=N oe_settle_us=N input_latch_us=N input_clock_us=N power_on_ms=N build_id=COMPILE_TIME_ID
+```
+
+The host rejects a profile-name mismatch and independently records the uploaded
+`WILLEM.COM` SHA-256; `build_id` is a non-self-referential compile-time label.
+Each experiment directory contains a durable `executions.json`; it is written
+before EXEC and binds stable execution IDs to the program/build/arguments. A
+different operation cannot reuse that directory.
+
 Programming additionally requires a documented rewritable device, endurance
 accounting, both existing authorization gates, device-appropriate VPP policy,
 changed/already-matching/retry/late-completion counts, separate programming and
@@ -36,9 +55,20 @@ The write runner expects one final structured metric line (all values are
 unsigned decimal integers):
 
 ```text
-DOSRAVI_WRITE_METRIC program_ms=N verify_ms=N changed=N unchanged=N retry_bytes=N retries=N late=N
+DOSRAVI_WRITE_METRIC program_ms=N verify_ms=N changed=N unchanged=N retry_bytes=N retries=N late=N image_crc32=8_HEX_DIGITS build_id=COMPILE_TIME_ID
 ```
 
 The log after that line must contain `Safe shutdown complete: VCC off, VPP
 off`. The host records the metric, removes the remote `WRITE.OK` token, and
 performs ten fresh full reads compared byte-for-byte with the requested image.
+For the initial 28C64 workflow, changed plus unchanged must cover all 8,192
+bytes, and retry-byte/late counts cannot exceed the changed-byte count.
+
+All Willem runners require notes for programmer revision, complete chip
+marking, supply, socket placement/orientation, DIP switches, and cable/adapter
+identity. Writing additionally requires the exact datasheet, endurance, and
+erase requirements; the command fails before opening the transport when any
+of these records is absent.
+Device, LPT, and profile values are restricted to single validated DOS tokens;
+they cannot smuggle additional command-tail switches. A supplied trusted image
+is stored in the session artifact manifest with CRC-32 and SHA-256.

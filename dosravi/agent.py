@@ -49,6 +49,30 @@ class Agent:
         for frame in self.decoder.feed(data):
             if frame.frame_type != FrameType.REQUEST:
                 continue
+            if (
+                frame.transaction == 0
+                or frame.sequence != 0
+                or frame.flags != 0
+                or len(frame.payload) > 1200
+            ):
+                try:
+                    command = Command(frame.payload[0])
+                except (IndexError, ValueError):
+                    command = Command.PING
+                output.extend(
+                    Frame(
+                        FrameType.RESPONSE,
+                        frame.transaction,
+                        payload=response_payload(
+                            command,
+                            Status.BAD_REQUEST,
+                            tlv_text(
+                                Tag.MESSAGE, "invalid v0.1 request header or size"
+                            ),
+                        ),
+                    ).encode()
+                )
+                continue
             if frame.transaction in self.replays:
                 original, encoded_response = self.replays[frame.transaction]
                 if original != frame.payload:
@@ -115,7 +139,7 @@ class Agent:
         if len(name) > 12 or name.startswith("."):
             raise PermissionError("path is not a DOS 8.3 filename")
         stem, dot, extension = name.partition(".")
-        allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$~!#%&-{}()@'`"
+        allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$~!#%&-{}()@'"
         if not (1 <= len(stem) <= 8 and len(extension) <= 3 and (not dot or extension)):
             raise PermissionError("path is not a DOS 8.3 filename")
         upper = name.upper()
@@ -127,6 +151,16 @@ class Agent:
         if stem.upper() in reserved:
             raise PermissionError("DOS device names are not workspace files")
         return self.root / upper
+
+    @staticmethod
+    def _protected_control_path(path: Path) -> bool:
+        return path.name.upper() in {
+            "DOSRAVI.COM",
+            "DOSRAVI.OLD",
+            "DOSRAVI.BAD",
+            "UPDATE.PND",
+            "RAVILOAD.BAT",
+        }
 
     def _dispatch(
         self, command: Command, fields: dict[int, list[bytes]]
@@ -141,7 +175,12 @@ class Agent:
                     "protocol": 1,
                     "workspace": str(self.root),
                     "free_disk": shutil.disk_usage(self.root).free,
-                    "capabilities": ["replay", "resume", "exec-capture"],
+                    "capabilities": [
+                        "replay",
+                        "resume",
+                        "exec-capture",
+                        "self-update",
+                    ],
                     "chunk_size": 512,
                 }
                 return Status.OK, [
@@ -158,11 +197,20 @@ class Agent:
                     and not item.name.endswith((".PART", ".META"))
                     and item.name != "UPDATE.PND"
                 ]
-                return Status.OK, [
-                    tlv_text(Tag.JSON, json.dumps(listing, separators=(",", ":")))
+                start = as_u32(first(fields, Tag.OFFSET, b"\0\0\0\0"))
+                page = listing[start : start + 24]
+                response_fields = [
+                    tlv_text(Tag.JSON, json.dumps(page, separators=(",", ":")))
                 ]
+                if start + len(page) < len(listing):
+                    response_fields.append(tlv_u32(Tag.OFFSET, start + len(page)))
+                return Status.OK, [*response_fields]
             if command == Command.PUT_BEGIN:
                 path = self._path(fields)
+                if self._protected_control_path(path):
+                    raise PermissionError(
+                        "control file requires the update/installer path"
+                    )
                 size = as_u32(first(fields, Tag.SIZE))
                 expected = as_u32(first(fields, Tag.CRC32))
                 part = path.with_name(path.name + ".PART")
@@ -178,6 +226,10 @@ class Agent:
                 return Status.OK, [tlv_u32(Tag.OFFSET, offset)]
             if command == Command.PUT_DATA:
                 path = self._path(fields)
+                if self._protected_control_path(path):
+                    raise PermissionError(
+                        "control file requires the update/installer path"
+                    )
                 offset = as_u32(first(fields, Tag.OFFSET))
                 data = first(fields, Tag.DATA)
                 part = path.with_name(path.name + ".PART")
@@ -191,6 +243,10 @@ class Agent:
                 return Status.OK, [tlv_u32(Tag.OFFSET, offset + len(data))]
             if command == Command.PUT_COMMIT:
                 path = self._path(fields)
+                if self._protected_control_path(path):
+                    raise PermissionError(
+                        "control file requires the update/installer path"
+                    )
                 size = as_u32(first(fields, Tag.SIZE))
                 expected = as_u32(first(fields, Tag.CRC32))
                 part = path.with_name(path.name + ".PART")
@@ -227,6 +283,13 @@ class Agent:
                 ]
             if command == Command.REMOVE:
                 path = self._path(fields)
+                if (
+                    self._protected_control_path(path)
+                    or path.name.upper() == "DOSRAVI.NEW"
+                ):
+                    raise PermissionError(
+                        "agent control files cannot be removed remotely"
+                    )
                 if not path.is_file():
                     return Status.NOT_FOUND, []
                 path.unlink()
@@ -247,12 +310,20 @@ class Agent:
                 if not program.is_file():
                     return Status.NOT_FOUND, []
                 args = first(fields, Tag.ARGS, b"").decode("ascii")
+                stdin_value = first(fields, Tag.STDIN, b"")
+                stdin_data = None
+                if stdin_value:
+                    stdin_path = self._path({int(Tag.PATH): [stdin_value]})
+                    if not stdin_path.is_file():
+                        return Status.NOT_FOUND, []
+                    stdin_data = stdin_path.read_bytes()
                 stdout_name = f"O{exec_id & 0xFFFFFF:06X}.OUT"
                 stderr_name = f"E{exec_id & 0xFFFFFF:06X}.ERR"
                 started = time.monotonic()
                 result = subprocess.run(
                     [str(program), *args.split()],
                     cwd=self.root,
+                    input=stdin_data,
                     capture_output=True,
                     check=False,
                     timeout=60,
@@ -278,6 +349,13 @@ class Agent:
                     return Status.DENIED, [
                         tlv_text(Tag.MESSAGE, "fixed DOSRAVI.NEW staging file required")
                     ]
+                if (self.root / "UPDATE.PND").exists():
+                    return Status.BUSY, [
+                        tlv_text(
+                            Tag.MESSAGE,
+                            "an agent update already awaits confirmation",
+                        )
+                    ]
                 data = path.read_bytes()
                 if len(data) != as_u32(first(fields, Tag.SIZE)) or file_crc32(
                     data
@@ -292,7 +370,10 @@ class Agent:
                 (self.root / "UPDATE.PND").write_text("pending\n", encoding="ascii")
                 return Status.OK, []
             if command == Command.UPDATE_CONFIRM:
-                (self.root / "UPDATE.PND").unlink(missing_ok=True)
+                marker = self.root / "UPDATE.PND"
+                if not marker.exists():
+                    return Status.NOT_FOUND, []
+                marker.unlink()
                 return Status.OK, []
             if command == Command.UPDATE_ROLLBACK:
                 current = self.root / "DOSRAVI.COM"
@@ -328,4 +409,10 @@ class Agent:
 
     @staticmethod
     def _execution_identity(fields: dict[int, list[bytes]]) -> bytes:
-        return first(fields, Tag.PATH) + b"\0" + first(fields, Tag.ARGS, b"")
+        return (
+            first(fields, Tag.PATH)
+            + b"\0"
+            + first(fields, Tag.ARGS, b"")
+            + b"\0"
+            + first(fields, Tag.STDIN, b"")
+        )

@@ -8,7 +8,7 @@ Status reviewed 2026-08-06. `make verify` is the local acceptance command.
 | M1 UART characterization | Hardware pending | `COMPROBE.COM` inventories BIOS COM bases, UART/FIFO behavior, internal loopback, and an external-loopback baud sweep from 9,600 through 115,200. The real Pocket8086 connector, null-modem pinout, UART result, and reliable ceiling must be measured. |
 | M2 protocol/emulator | Verified | Cross-language framing fixtures, CRCs, bounded decoder, retry/replay/resume, raw logs, property tests, fault injection, and DOSBox-X TCP null-modem tests pass. |
 | M3 deploy/execute/update | Verified | Headless 8086 and 80186 DOSBox-X runs cover interrupted PUT, resumed GET, path rejection, duplicate transaction/execution replay, child output/artifact/status collection, update confirmation, retained fallback, and boot rollback. |
-| M4 current Willem | Hardware pending | The ten-read runner and artifact/timing/safe-shutdown gates exist. It still needs the real unchanged `WILLEM.COM`, programmer, supported known chip, and trusted expected image. |
+| M4 current Willem | Emulator diagnostic verified; hardware pending | The unmodified Willem 0.0.5 diagnostic completed headlessly through file-backed stdin; stdout/stderr, append log, and trace were retrieved and hashed with safe shutdown. The legacy ten-read parser exists. It still needs the real programmer, supported known chip, and trusted expected image. |
 | M5 speed characterization | Integration/hardware pending | The conservative-to-aggressive sweep, first-failure stop, diagnostic trace rerun, drift check, and slower production reacceptance are implemented. `WILLEM.COM` must supply audited `/PROFILE:NAME` tables and local PIT metrics, then the profiles must be run physically. |
 | M6 РФ5 showcase | Hardware pending | No device may be inferred from the family name. Complete chip markings, exact datasheet, socket/switch/power facts, and a trustworthy reference method are required before read-only Willem support or trials. |
 | M7 controlled write | Hardware pending | The host accepts only 28C64, requires `--write`, `WRITE.OK`, hardware/endurance notes, structured local write/verify metrics, safe shutdown proof, and ten accepted post-write reads. A specific supported device and endurance-aware physical sequence are still required. |
@@ -39,3 +39,4 @@ Before M1/M4-M7 can be claimed, record:
 
 Store each run in a dedicated session directory. A failed or interrupted
 physical run remains evidence and must not be replaced by an emulator claim.
+Follow [`physical-runbook.md`](physical-runbook.md) for the ordered commands.

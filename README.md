@@ -42,20 +42,41 @@ dosravi --serial /dev/ttyUSB0 willem-sweep \
   --program ../willem-v30/build/dos/WILLEM.COM \
   --device 2764 --profiles conservative,balanced,fast \
   --output sessions/2764-sweep \
-  --note programmer=PCB5.0E --note chip-marking=RECORD-COMPLETE-MARKING
+  --note programmer-revision=PCB5.0E \
+  --note machine=Pocket8086 \
+  --note chip-marking=RECORD-COMPLETE-MARKING \
+  --note datasheet=RECORD-EXACT-DOCUMENT-REVISION \
+  --note supply=RECORD-MEASURED-VOLTAGE \
+  --note socket=RECORD-POSITION-AND-ORIENTATION \
+  --note dip-switches=RECORD-ALL-SWITCHES \
+  --note cable-adapter=RECORD-LPT-AND-SERIAL-HARDWARE
 ```
+
+Ordinary frame retries use `--timeout`; a received EXEC `STARTED` event switches
+to the separate bounded `--exec-timeout` (300 seconds by default) without
+retransmitting while the DOS child is running.
+Session runners persist execution IDs before launch. Generic one-off `exec` and
+`run` also accept `--execution-id 0x...` when an external workflow owns the
+restart journal.
+`run --stdin RESPONSES.TXT` uploads a bounded file as child DOS handle 0; this
+supports reviewed answers to legacy prompts without providing an interactive
+terminal or using the laptop keyboard.
 
 `run` creates a session directory containing raw RX/TX streams, a decoded
 transaction log, stdout/stderr, requested artifacts, hashes, timings, source
-identity, and connection metadata.  `willem-read` enforces the ten-run
-acceptance gate and rejects mismatching, trusted-image-disagreeing, all-zero,
-and all-FF captures.
+identity (including dirty-worktree state), and connection metadata. Failed
+runs retain their partial trials and host error. `willem-read` enforces the
+ten-run acceptance gate and rejects mismatching, trusted-image-disagreeing,
+all-zero, and all-FF captures.
 `willem-sweep` treats profile order as conservative-to-aggressive, stops at
 the first failing profile, repeats the conservative profile to detect drift,
 and reruns the timing step below the fastest passing profile as the proposed
 production baseline.  Willem must emit a structured
 `DOSRAVI_METRIC read_ms=N profile=NAME` line from its local PIT timing; host
 EXEC wall time is never substituted for programmer speed.
+For M4 only, `willem-read --legacy-current` accepts the unmodified Willem 0.0.5
+append-log format and reports its coarse local power-on-to-safe-shutdown window.
+It is labeled as legacy timing and is not used for optimized-profile claims.
 
 Programming is deliberately narrower than reading. `willem-write` accepts
 only `28C64`, requires `--write`, uploads a reviewed `WRITE.OK` token, and

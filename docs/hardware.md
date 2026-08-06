@@ -17,6 +17,10 @@ Use only an RS-232-level adapter through a null-modem connection.  Record TX,
 RX, signal ground, and any handshake loopbacks explicitly.  Do not attach a
 TTL UART directly.
 
+COMPROBE and DOSRAVI restore the readable UART registers and whether a usable
+FIFO had been enabled. The original FIFO trigger level is write-only and cannot
+be reconstructed; restoration re-enables such a FIFO at its default trigger.
+
 ## Willem / chip session
 
 - Programmer PCB revision and compatibility mode: **unconfirmed**

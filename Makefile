@@ -33,11 +33,18 @@ build/dos/dosmain.o: src/dosmain.c include/dosravi.h
 	mkdir -p build/dos
 	bcc $(DOSFLAGS) -Iinclude -c $< -o $@
 
+build/dos/dosmain-next.o: src/dosmain.c include/dosravi.h
+	mkdir -p build/dos
+	bcc $(DOSFLAGS) -DAGENT_VERSION='"0.1.1-test"' -Iinclude -c $< -o $@
+
 build/dos/uart.o: src/uart.asm
 	mkdir -p build/dos
 	nasm -f as86 $< -o $@
 
 build/dos/DOSRAVI.COM: build/dos/dosmain.o build/dos/protocol.o build/dos/uart.o
+	bcc -0 -Md -i -o $@ $^
+
+build/dos/DOSNEXT.COM: build/dos/dosmain-next.o build/dos/protocol.o build/dos/uart.o
 	bcc -0 -Md -i -o $@ $^
 
 build/dos/comprobe.o: src/comprobe.c
@@ -51,7 +58,7 @@ dos: build/dos/DOSRAVI.COM build/dos/COMPROBE.COM
 	file build/dos/DOSRAVI.COM
 	file build/dos/COMPROBE.COM
 
-dos-test: dos
+dos-test: dos build/dos/DOSNEXT.COM
 	bash tools/test_dosbox.sh
 
 dosbox-headless: dos

@@ -28,8 +28,8 @@ _dr_uart_bios_base:
     pop bp
     ret
 
-; void dr_uart_save(unsigned base, unsigned char state[6])
-; IER, LCR, MCR, SCR, DLL, DLM. FCR is write-only and is disabled by init.
+; void dr_uart_save(unsigned base, unsigned char state[7])
+; IER, LCR, MCR, SCR, DLL, DLM, and IIR FIFO-enable indication.
 _dr_uart_save:
     push bp
     mov bp, sp
@@ -62,12 +62,16 @@ _dr_uart_save:
     add dx, 2
     mov al, [si+1]
     out dx, al
+    dec dx
+    in al, dx
+    and al, 0c0h
+    mov [si+6], al
     pop dx
     pop si
     pop bp
     ret
 
-; void dr_uart_restore(unsigned base, unsigned char state[6])
+; void dr_uart_restore(unsigned base, unsigned char state[7])
 _dr_uart_restore:
     push bp
     mov bp, sp
@@ -99,6 +103,13 @@ _dr_uart_restore:
     out dx, al
     sub dx, 6
     mov al, [si]
+    out dx, al
+    inc dx
+    xor al, al
+    cmp byte [si+6], 0
+    je .fifo_restored
+    mov al, 1
+.fifo_restored:
     out dx, al
     pop dx
     pop si
@@ -275,10 +286,17 @@ _dr_uart_external_loopback:
 .external_next:
     push dx
     add dx, 5
+    mov di, 0ffffh
 .external_tx_ready:
     in al, dx
     test al, 020h
-    jz .external_tx_ready
+    jnz .external_tx_available
+    dec di
+    jnz .external_tx_ready
+    pop dx
+    xor ax, ax
+    jmp .external_done
+.external_tx_available:
     pop dx
     mov al, bl
     xor al, 05ah
