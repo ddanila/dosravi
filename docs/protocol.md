@@ -50,7 +50,7 @@ Status values are `OK=0`, `BAD_REQUEST=1`, `NOT_FOUND=2`, `DENIED=3`,
 | Code | Command | Required request fields | Successful response |
 |---:|---|---|---|
 | 1 | PING | none | MESSAGE=`PONG` |
-| 2 | INFO | none | JSON capability object |
+| 2 | INFO | none | JSON capability/machine object: DOS, BIOS equipment word, conventional memory, COM/UART, free memory/disk, and chunk size |
 | 3 | LIST | optional OFFSET (zero initially) | JSON page; next OFFSET and MORE when another page exists |
 | 4 | PUT_BEGIN | PATH, SIZE, CRC32 | resumable OFFSET |
 | 5 | PUT_DATA | PATH, OFFSET, DATA | next OFFSET |

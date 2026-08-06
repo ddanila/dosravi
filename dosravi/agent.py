@@ -173,6 +173,7 @@ class Agent:
                     "agent": "reference",
                     "version": "0.1.0",
                     "protocol": 1,
+                    "machine": "python-reference",
                     "workspace": str(self.root),
                     "free_disk": shutil.disk_usage(self.root).free,
                     "capabilities": [

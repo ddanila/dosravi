@@ -40,7 +40,8 @@ dosravi --serial /dev/ttyUSB0 run \
 
 dosravi --serial /dev/ttyUSB0 willem-sweep \
   --program ../willem-v30/build/dos/WILLEM.COM \
-  --device 2764 --profiles conservative,balanced,fast \
+  --device 2764 \
+  --profiles conservative,address2,oe2,latch2,balanced,address1,oe1,latch1,fast,powerfast \
   --output sessions/2764-sweep \
   --note programmer-revision=PCB5.0E \
   --note machine=Pocket8086 \

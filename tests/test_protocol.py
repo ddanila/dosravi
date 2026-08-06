@@ -258,6 +258,14 @@ class AcceptanceTests(unittest.TestCase):
             self.assertEqual(result["read_ms"], 1250)
             self.assertTrue(result["safe_shutdown"])
 
+            log.write_text(
+                log.read_text(encoding="ascii").replace(
+                    "device=2764", "device=AT28C64"
+                ),
+                encoding="ascii",
+            )
+            self.assertEqual(parse_legacy_willem_log(log, "28C64")["read_ms"], 1250)
+
     def test_structured_willem_write_metric_requires_safe_shutdown(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "WILLEM.LOG"

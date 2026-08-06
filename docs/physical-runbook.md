@@ -69,6 +69,18 @@ Stop at the first failure, retain the failed session, rerun the conservative
 profile for drift, and accept production only one step slower than the fastest
 10/10 profile.
 
+The initial `willem-v30` development branch is `dosravi-timing-profiles` at
+commit `589033f`. Its adjacent one-variable sequence is:
+
+```text
+conservative,address2,oe2,latch2,balanced,address1,oe1,latch1,fast,powerfast
+```
+
+Build that exact branch and record its resulting `WILLEM.COM` SHA-256. The
+tables and their structured PIT metrics pass 8086/80186 DOSBox-X and a complete
+headless DOSRAVI upload/execute/retrieve integration, but none is physically
+accepted yet.
+
 РФ5 work remains read-only until the complete marking and exact datasheet
 determine capacity, pinout, voltage, socket placement, DIP settings, and timing.
 Writing remains locked to the documented 28C64 workflow, explicit `--write`,

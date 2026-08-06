@@ -450,6 +450,31 @@ def _validate_willem_tokens(device: str, lpt: str, profile: str | None) -> None:
         raise SystemExit("timing profile must use 1..24 ASCII letters, digits, _ or -")
 
 
+def _validate_profile_step(previous: dict[str, Any], current: dict[str, Any]) -> None:
+    timing_fields = (
+        "address_setup_us",
+        "oe_settle_us",
+        "input_latch_us",
+        "input_clock_us",
+        "power_on_ms",
+    )
+    required = {*timing_fields, "build_id"}
+    if required - previous.keys() or required - current.keys():
+        raise ValueError("profile log lacks a required audited timing field")
+    if current["build_id"] != previous["build_id"]:
+        raise ValueError("Willem build ID changed during timing sweep")
+    changed = [field for field in timing_fields if current[field] != previous[field]]
+    if len(changed) != 1:
+        raise ValueError(
+            "adjacent sweep profiles must change exactly one timing dimension"
+        )
+    field = changed[0]
+    if not isinstance(previous[field], int) or not isinstance(current[field], int):
+        raise TypeError("profile timing values must be integers")
+    if current[field] >= previous[field]:
+        raise ValueError("timing sweep must move from conservative to aggressive")
+
+
 def _willem_read(
     args: argparse.Namespace, client: Client, record: SessionRecord
 ) -> int:
@@ -599,7 +624,42 @@ def _willem_sweep(
         profile_args.output = args.output / directory
         try:
             _willem_read(profile_args, client, record)
-        except (RuntimeError, ValueError, RemoteError, TransportError) as exc:
+            parameters = record.programmer_stats.get("profile_parameters")
+            if not isinstance(parameters, dict):
+                raise TypeError("profile run did not return audited parameters")
+            if phase == "sweep":
+                previous = next(
+                    (
+                        result
+                        for result in reversed(results)
+                        if result["phase"] == "sweep" and result["passed"]
+                    ),
+                    None,
+                )
+                if previous is not None:
+                    _validate_profile_step(previous["parameters"], parameters)
+            else:
+                baseline = next(
+                    (
+                        result
+                        for result in results
+                        if result["phase"] == "sweep"
+                        and result["passed"]
+                        and result["profile"] == profile
+                    ),
+                    None,
+                )
+                if baseline is None or baseline["parameters"] != parameters:
+                    raise ValueError(
+                        f"{phase} profile parameters differ from the accepted sweep"
+                    )
+        except (
+            RuntimeError,
+            TypeError,
+            ValueError,
+            RemoteError,
+            TransportError,
+        ) as exc:
             results.append(
                 {
                     "profile": profile,
@@ -616,17 +676,25 @@ def _willem_sweep(
                 "passed": True,
                 "acceptance": record.programmer_stats["read_acceptance"],
                 "timing": record.programmer_stats["local_read_timing"],
-                "parameters": record.programmer_stats.get("profile_parameters"),
+                "parameters": parameters,
             }
         )
 
     fastest_index = -1
-    failure: RuntimeError | ValueError | RemoteError | TransportError | None = None
+    failure: (
+        RuntimeError | TypeError | ValueError | RemoteError | TransportError | None
+    ) = None
     for index, profile in enumerate(profiles):
         try:
             run_profile(profile, f"sweep-{index + 1:02d}-{profile}", "sweep")
             fastest_index = index
-        except (RuntimeError, ValueError, RemoteError, TransportError) as exc:
+        except (
+            RuntimeError,
+            TypeError,
+            ValueError,
+            RemoteError,
+            TransportError,
+        ) as exc:
             failure = exc
             break
     if fastest_index < 0:

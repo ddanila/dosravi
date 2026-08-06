@@ -665,10 +665,16 @@ static void handle_info()
     char info[384];
     unsigned dos_major;
     unsigned dos_minor;
+    unsigned equipment_word;
+    unsigned conventional_kb;
     input.h.ah = 0x30U;
     int86(0x21, &input, &output);
     dos_major = output.h.al;
     dos_minor = output.h.ah;
+    int86(0x11, &input, &output);
+    equipment_word = output.x.ax;
+    int86(0x12, &input, &output);
+    conventional_kb = output.x.ax;
     input.h.ah = 0x36U;
     input.h.dl = 0;
     int86(0x21, &input, &output);
@@ -680,13 +686,16 @@ static void handle_info()
     free_memory = (dr_u32)output.x.bx * 16UL;
     sprintf(info,
             "{\"agent\":\"DOSRAVI.COM\",\"version\":\"%s\","
-            "\"protocol\":1,\"dos\":\"%u.%u\",\"com_base\":%u,"
+            "\"protocol\":1,\"dos\":\"%u.%u\","
+            "\"bios_equipment_word\":%u,\"conventional_kb\":%u,"
+            "\"com_base\":%u,"
             "\"uart_fifo_bits\":%u,\"free_memory\":%lu,"
             "\"free_disk\":%lu,\"chunk_size\":%u,"
             "\"capabilities\":[\"replay\",\"resume\",\"exec-capture\","
             "\"self-update\"]}",
-            AGENT_VERSION, dos_major, dos_minor, uart_base, uart_capability,
-            free_memory, free_bytes, DEFAULT_CHUNK);
+            AGENT_VERSION, dos_major, dos_minor, equipment_word,
+            conventional_kb, uart_base, uart_capability, free_memory,
+            free_bytes, DEFAULT_CHUNK);
     response_begin(CMD_INFO, STATUS_OK);
     response_text(TAG_JSON, info);
 }

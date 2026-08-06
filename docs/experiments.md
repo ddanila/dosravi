@@ -42,6 +42,10 @@ DOSRAVI_PROFILE name=NAME address_setup_us=N oe_settle_us=N input_latch_us=N inp
 
 The host rejects a profile-name mismatch and independently records the uploaded
 `WILLEM.COM` SHA-256; `build_id` is a non-self-referential compile-time label.
+The sweep also rejects adjacent accepted tables unless exactly one of the five
+read timing dimensions, including power-on stabilization, strictly decreases
+while the build ID remains fixed. Drift and production reruns must reproduce their
+original accepted parameter dictionaries exactly.
 Each experiment directory contains a durable `executions.json`; it is written
 before EXEC and binds stable execution IDs to the program/build/arguments. A
 different operation cannot reuse that directory.

@@ -226,7 +226,12 @@ def parse_legacy_willem_log(path: Path, expected_device: str) -> dict[str, Any]:
     operation = re.search(
         r"Operation=READ\s+device=([A-Za-z0-9_-]+).*\s+trace=(on|off)", run
     )
-    if not operation or operation.group(1).upper() != expected_device.upper():
+    logged_device = operation.group(1).upper() if operation else ""
+    expected = expected_device.upper()
+    device_matches = logged_device == expected or (
+        expected == "28C64" and logged_device == "AT28C64"
+    )
+    if not operation or not device_matches:
         raise ValueError("last legacy Willem run is not the requested read")
     if operation.group(2) != "off":
         raise ValueError("legacy speed baseline cannot use full tracing")
