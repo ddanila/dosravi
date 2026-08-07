@@ -148,4 +148,19 @@ The exact protocol is in [`docs/protocol.md`](docs/protocol.md), safety and
 recovery invariants in [`docs/safety.md`](docs/safety.md), and physical details
 which must be recorded before use in [`docs/hardware.md`](docs/hardware.md).
 
-DOSRAVI is licensed under GPL-2.0-only.
+## Licensing and Willem boundary
+
+DOSRAVI's source code is licensed under the MIT License. It is a generic DOS
+remote-control and file-transfer tool and contains no Willem source code.
+
+The examples use a separately built `WILLEM.COM` from
+[`ddanila/willem-v30`](https://github.com/ddanila/willem-v30). That program is
+not part of DOSRAVI and retains its own GPL license. A future build may use
+Willem as a library if useful; the resulting combined program would need to
+follow the Willem/GPL distribution terms, while the DOSRAVI-owned source files
+can remain available under MIT.
+
+The generated DOS `.COM` programs link the dev86 DOS C runtime, which is
+licensed separately under the GNU Library General Public License version 2.
+That toolchain dependency is not Willem code and does not change the MIT
+license of the DOSRAVI source.

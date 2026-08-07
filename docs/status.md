@@ -4,7 +4,7 @@ Status reviewed 2026-08-07. `make verify` is the local acceptance command.
 
 | Milestone | State | Evidence or remaining gate |
 |---|---|---|
-| M0 repository/contracts | Partial | Local Git repository, GPL-2.0-only text, layout, CI, protocol and safety documents exist. Public `ddanila/dosravi` creation and the name/license confirmation remain user decisions. |
+| M0 repository/contracts | Verified | The public `ddanila/dosravi` repository, MIT license, layout, CI, protocol, safety model, and explicit boundary from the separately built GPL `WILLEM.COM` are established. |
 | M1 UART characterization | Physical link accepted; inventory partial | Pocket8086 COM1 is 03F8h and reports a 16550A-compatible FIFO with internal loopback PASS. The CP2102/MAX RS-232 path passed three zero-retry 32 KiB hash-verified round trips at 57,600 baud; 115,200 passed short requests but failed sustained 512-byte frames. Exact connector/pin recording and external-loopback evidence remain. |
 | M2 protocol/emulator | Verified | Cross-language framing fixtures, CRCs, bounded decoder, retry/replay/resume, raw logs, property tests, fault injection, and DOSBox-X TCP null-modem tests pass, including a 64 KiB round trip across the dev86 runtime's 32 KiB file-position boundary. |
 | M3 deploy/execute/update | Verified | Headless 8086 and 80186 DOSBox-X runs cover interrupted PUT, resumed GET, path rejection, duplicate transaction/execution replay, child output/artifact/status collection, update confirmation, retained fallback, boot rollback, and clean launcher return. A physical two-phase update also promoted a replacement while retaining `DOSRAVI.OLD`. |

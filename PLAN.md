@@ -373,8 +373,9 @@ Every physical session directory should contain:
 ### M0: Repository and contracts
 
 - Create the Git repository and public GitHub repository.
-- Select the license; GPL-2.0-only is the current proposal to align with
-  `willem-v30` reuse.
+- License DOSRAVI's own source under MIT. Keep `WILLEM.COM` as a separately
+  built GPL program unless a future integration deliberately links Willem as
+  a library and applies the resulting combined-work distribution terms.
 - Add project layout, build rules, protocol draft, safety model, and CI.
 
 ### M1: UART characterization
@@ -450,8 +451,7 @@ Every physical session directory should contain:
   the accepted 57,600-baud protocol rate are already physically established.
 - Record the complete markings of the available РФ5 chips and identify
   whether a trusted dump or second programmer is available for comparison.
-- Confirm the public `dosravi` name and GPL-2.0-only license before creating the
-  GitHub repository.
+- The public `ddanila/dosravi` name and MIT license are confirmed.
 - Timing-profile representation is resolved for the first read-only sweep:
   audited named tables selected by `/PROFILE:NAME`, with exact parameters and
   local PIT timing logged. Normal commands do not expose arbitrary write/VPP
