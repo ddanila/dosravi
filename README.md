@@ -38,13 +38,14 @@ dosravi --serial /dev/ttyUSB0 --baud 38400 ping
 dosravi --tcp 127.0.0.1:5000 info
 dosravi --serial /dev/ttyUSB0 --baud 38400 link-test --size 1048576 --passes 10
 
+# Build WILLEM.COM from https://github.com/ddanila/willem-v30 first.
 dosravi --serial /dev/ttyUSB0 run \
-  --put ../willem-v30/build/dos/WILLEM.COM:WILLEM.COM \
+  --put WILLEM.COM:WILLEM.COM \
   --exec "WILLEM.COM R2764 READ.BIN 378" \
   --get READ.BIN --get WILLEM.LOG
 
 dosravi --serial /dev/ttyUSB0 willem-sweep \
-  --program ../willem-v30/build/dos/WILLEM.COM \
+  --program WILLEM.COM \
   --device 2764 \
   --profiles conservative,address2,oe2,latch2,balanced,address1,oe1,latch1,fast,powerfast \
   --output sessions/2764-sweep \
