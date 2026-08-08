@@ -5,7 +5,72 @@ import unittest
 from itertools import pairwise
 from pathlib import Path
 
-from dosravi.cli import _persistent_execution_ids, _validate_profile_step
+from dosravi.cli import (
+    _parse_willem_write_evidence,
+    _parser,
+    _persistent_execution_ids,
+    _validate_profile_step,
+)
+
+
+class WillemWriteArgumentTests(unittest.TestCase):
+    def test_post_write_read_defaults_to_one(self) -> None:
+        args = _parser().parse_args(
+            [
+                "willem-write",
+                "--program",
+                "WILLEM.COM",
+                "--device",
+                "28C64",
+                "--image",
+                "TARGET.BIN",
+                "--gate",
+                "WRITE.OK",
+                "--read-profile",
+                "legacy",
+                "--output",
+                "session",
+            ]
+        )
+        self.assertEqual(args.post_write_count, 1)
+
+    def test_post_write_read_count_is_bounded(self) -> None:
+        base = [
+            "willem-write",
+            "--program",
+            "WILLEM.COM",
+            "--device",
+            "28C64",
+            "--image",
+            "TARGET.BIN",
+            "--gate",
+            "WRITE.OK",
+            "--read-profile",
+            "legacy",
+            "--output",
+            "session",
+            "--post-write-count",
+        ]
+        self.assertEqual(_parser().parse_args([*base, "10"]).post_write_count, 10)
+        with self.assertRaises(SystemExit):
+            _parser().parse_args([*base, "0"])
+
+    def test_current_stdout_precedes_stale_append_log(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stdout = root / "STDOUT.TXT"
+            log = root / "WILLEM.LOG"
+            log.write_text("old log without the current metric\n", encoding="ascii")
+            stdout.write_text(
+                "DOSRAVI_WRITE_METRIC program_ms=10 verify_ms=20 "
+                "changed=1 unchanged=8191 retry_bytes=0 retries=0 late=0 "
+                "image_crc32=9dcc5558 build_id=physical\n"
+                "Safe shutdown complete: VCC off, VPP off\n",
+                encoding="ascii",
+            )
+            metrics, evidence = _parse_willem_write_evidence((stdout, log), "9dcc5558")
+            self.assertEqual(evidence, stdout)
+            self.assertEqual(metrics["changed"], 1)
 
 
 class ExecutionManifestTests(unittest.TestCase):

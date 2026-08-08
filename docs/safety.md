@@ -28,6 +28,11 @@ The DOS agent is deliberately not a general remote shell.
   agent.  Reset the Pocket8086; AUTOEXEC starts DOSRAVI again.  Fully unattended
   crash recovery requires an explicitly designed external reset or watchdog
   and is not silently claimed by v0.1.
+- While the foreground agent itself is idle, `Ctrl+C` or `Esc` performs a
+  local clean exit after restoring the saved UART registers. The remote
+  `QUIT` command performs the same restoration. Keyboard polling starts only
+  after a 500 ms protocol-command quiet period and cannot interrupt a frame,
+  response, or child program.
 - Agent replacement is limited to the two-phase UPDATE workflow.  A complete
   uploaded image is CRC-verified before promotion, `DOSRAVI.OLD` is never
   discarded during staging, and `RAVILOAD.BAT` restores it after an

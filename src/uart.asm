@@ -13,6 +13,25 @@ GLOBAL _dr_uart_put
 GLOBAL _dr_uart_drain
 GLOBAL _dr_uart_loopback
 GLOBAL _dr_uart_external_loopback
+GLOBAL _dr_key_ready
+GLOBAL _dr_key_get
+
+; unsigned dr_key_ready(void), nonzero when BIOS has a console key buffered.
+_dr_key_ready:
+    mov ah, 01h
+    int 16h
+    mov ax, 0
+    jz .no_key
+    inc ax
+.no_key:
+    ret
+
+; unsigned dr_key_get(void), blocking BIOS read with ASCII in the low byte.
+_dr_key_get:
+    mov ah, 00h
+    int 16h
+    xor ah, ah
+    ret
 
 ; unsigned dr_uart_bios_base(unsigned index), index 0..3
 _dr_uart_bios_base:

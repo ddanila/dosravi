@@ -188,7 +188,7 @@ def main() -> int:
     assert client.ping() == "PONG"
     replacement_info = client.info()
     assert replacement_info["agent"] == "DOSRAVI.COM"
-    assert replacement_info["version"] == "0.1.1-test"
+    assert replacement_info["version"] == "0.1.2-test"
     assert (work / "DOSRAVI.OLD").exists()
     assert (work / "UPDATE.PND").exists()
     assert (work / "DOSRAVI.OLD").read_bytes() == original_agent
@@ -198,7 +198,7 @@ def main() -> int:
     # launcher invoke the restored old agent in the same DOS session.
     client.rollback_update()
     assert client.ping() == "PONG"
-    assert client.info()["version"] == "0.1.0"
+    assert client.info()["version"] == "0.1.1"
     assert not (work / "UPDATE.PND").exists()
     assert (work / "DOSRAVI.COM").read_bytes() == original_agent
     assert (work / "DOSRAVI.BAD").read_bytes() == replacement_agent
@@ -207,7 +207,7 @@ def main() -> int:
     update_stats = client.put(work / "DOSNEXT.COM", "DOSRAVI.NEW")
     client.stage_update("DOSRAVI.NEW", update_stats.bytes, update_stats.crc32)
     assert client.ping() == "PONG"
-    assert client.info()["version"] == "0.1.1-test"
+    assert client.info()["version"] == "0.1.2-test"
     client.confirm_update()
     assert not (work / "UPDATE.PND").exists()
     assert (work / "DOSRAVI.OLD").read_bytes() == original_agent

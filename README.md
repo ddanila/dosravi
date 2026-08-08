@@ -88,14 +88,24 @@ It is labeled as legacy timing and is not used for optimized-profile claims.
 Programming is deliberately narrower than reading. `willem-write` accepts
 only `28C64`, requires `--write`, uploads a reviewed `WRITE.OK` token, and
 requires recorded `endurance`, `erase-requirements`, and `chip-marking` notes.
-It accepts the result only when `WILLEM.LOG` contains a structured
-`DOSRAVI_WRITE_METRIC` record followed by proof of VCC/VPP shutdown, then runs
-ten full reads against the requested image using the selected read profile.
+It accepts the result only when the current execution capture (or its
+`WILLEM.LOG` fallback) contains a structured `DOSRAVI_WRITE_METRIC` record
+followed by proof of VCC/VPP shutdown, then performs one fresh full read against
+the requested image using the selected read profile. Use
+`--post-write-count 2..10` only when a deliberately repeated endurance or
+profile experiment calls for it.
+
+The foreground DOS agent prints its version, selected COM port and UART base,
+baud rate, workspace, and local quit keys when it starts. Press `Ctrl+C` or
+`Esc` to restore the saved UART state and return to DOS; the host-side `quit`
+command remains available. Local keys are polled only after 500 ms without a
+complete protocol command; frame reception, response transmission, and child
+execution are not interrupted.
 
 The agent can update itself without touching the laptop:
 
 ```sh
-dosravi --serial /dev/ttyUSB0 update build/dos/DOSRAVI.COM --expect-version 0.1.0
+dosravi --serial /dev/ttyUSB0 update build/dos/DOSRAVI.COM --expect-version 0.1.1
 ```
 
 The host uploads and verifies `DOSRAVI.NEW`, stages it, waits for the launcher
@@ -103,8 +113,17 @@ to start the replacement, checks its INFO response, and confirms it.
 `DOSRAVI.OLD` remains available.  A reset before confirmation makes
 `RAVILOAD.BAT` restore that fallback automatically.
 
-The launcher defaults to COM1 at 38400 baud. During link characterization it
-can preserve another rate across replacement restarts, for example:
+The generic launcher defaults to COM1 at 38400 baud. For the recorded
+Pocket8086 plus CP2102/MAX/null-modem setup, `RAVI.BAT` is the zero-option
+production entry point and explicitly selects COM1, 57600 baud, and
+`C:\RAVI`:
+
+```dos
+RAVI
+```
+
+During link characterization, `RAVILOAD.BAT` can preserve another rate across
+replacement restarts, for example:
 
 ```dos
 CALL C:\RAVI\RAVILOAD.BAT /COM1 /BAUD:19200 /ROOT:C:\RAVI

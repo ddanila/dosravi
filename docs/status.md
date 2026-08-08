@@ -1,6 +1,6 @@
 # Implementation status
 
-Status reviewed 2026-08-07. `make verify` is the local acceptance command.
+Status reviewed 2026-08-09. `make verify` is the local acceptance command.
 
 | Milestone | State | Evidence or remaining gate |
 |---|---|---|
@@ -11,7 +11,7 @@ Status reviewed 2026-08-07. `make verify` is the local acceptance command.
 | M4 current Willem | Emulator diagnostic verified; hardware pending | The unmodified Willem 0.0.5 diagnostic completed headlessly through file-backed stdin; stdout/stderr, append log, and trace were retrieved and hashed with safe shutdown. The legacy ten-read parser exists. It still needs the real programmer, supported known chip, and trusted expected image. |
 | M5 speed characterization | Emulator integration verified; hardware pending | The host sweep enforces one decreasing read dimension per adjacent table (including power stabilization), stable build identity, first-failure stop, trace rerun, drift check, and slower production reacceptance. The `willem-v30` `dosravi-timing-profiles` branch at `589033f` supplies audited tables plus local PIT read/write metrics; its binary passed 8086/80186 DOSBox-X and live headless DOSRAVI upload/EXEC/artifact parsing, including the 28C64 `powerfast` record. Physical ten-read sweeps remain required. |
 | M6 РФ5 showcase | Hardware pending | No device may be inferred from the family name. Complete chip markings, exact datasheet, socket/switch/power facts, and a trustworthy reference method are required before read-only Willem support or trials. |
-| M7 controlled write | Emulator integration verified; hardware pending | The host accepts only 28C64, requires `--write`, `WRITE.OK`, hardware/endurance notes, structured local write/verify metrics, safe shutdown proof, and ten accepted post-write reads. The Willem branch emits independently timed programming/verification and identity/count metrics under DOSBox-X. A specific physical device and endurance-aware sequence are still required. |
+| M7 controlled write | Physical T31 write verified | On 2026-08-09 an AT28C64B was gated from two exact T32 reads, programmed with T31, fully verified by Willem, and confirmed by one fresh full read. The host accepts only 28C64, requires `--write`, `WRITE.OK`, hardware/endurance notes, structured local write/verify metrics, safe shutdown proof, and one post-write read. Current stdout is authoritative when an oversized legacy `WILLEM.LOG` cannot append. |
 
 ## Local verification completed
 
@@ -23,9 +23,9 @@ Status reviewed 2026-08-07. `make verify` is the local acceptance command.
   X server or visible UI.
 - DOS 8.3/CRLF distribution validation.
 
-## Required physical inputs
+## Remaining physical inputs
 
-Before M1/M4-M7 can be claimed, record:
+For the milestones still awaiting physical closure, record:
 
 1. Pocket8086 serial connector/gender and exact null-modem pinout plus retained
    external-loopback results. The 57,600-baud full-protocol soak now passes.
@@ -34,8 +34,10 @@ Before M1/M4-M7 can be claimed, record:
 3. The supported known chip and trusted reference image for the first ten-read
    baseline.
 4. Complete РФ5 markings and exact datasheet/reference-programmer information.
-5. For writing, the exact 28C64 marking/datasheet, endurance and erase rules,
-   reviewed `WRITE.OK`, and the audited Willem write algorithm/profile.
+
+The completed M7 write already retained the exact chip marking/datasheet,
+endurance and erase notes, reviewed `WRITE.OK` derivation, audited Willem
+algorithm/profile, complete verify metrics, and independent post-read identity.
 
 Store each run in a dedicated session directory. A failed or interrupted
 physical run remains evidence and must not be replaced by an emulator claim.

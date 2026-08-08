@@ -26,6 +26,7 @@ fi
 mkdir -p "$drive/RAVI"
 cp "$project_root/build/dos/DOSRAVI.COM" "$drive/RAVI/DOSRAVI.COM"
 cp "$project_root/build/dos/COMPROBE.COM" "$drive/RAVI/COMPROBE.COM"
+cp "$project_root/dos/RAVI.BAT" "$drive/RAVI/RAVI.BAT"
 cp "$project_root/dos/RAVILOAD.BAT" "$drive/RAVI/RAVILOAD.BAT"
 
 printf '%s\n' "$BASHPID" >"$pid_file"
@@ -42,5 +43,5 @@ exec env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy dosbox-x \
     -c "mount c $drive" \
     -c "c:" \
     -c "cd \\RAVI" \
-    -c "CALL RAVILOAD.BAT" \
+    -c "CALL RAVI.BAT" \
     >"$log" 2>&1 </dev/null

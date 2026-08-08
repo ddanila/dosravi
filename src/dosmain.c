@@ -13,11 +13,13 @@
 #endif
 
 #ifndef AGENT_VERSION
-#define AGENT_VERSION "0.1.0"
+#define AGENT_VERSION "0.1.1"
 #endif
 #define DEFAULT_BAUD 38400UL
 #define DEFAULT_CHUNK 512U
 #define MAX_CHUNK 1024U
+#define LOCAL_KEY_IDLE_MS 500UL
+#define LOCAL_KEY_POLL_SPINS 4096U
 #define MAX_PATH 12
 #define CACHE_COUNT 3
 #define CACHE_PAYLOAD 1200
@@ -71,9 +73,12 @@ extern void dr_uart_save(unsigned base, unsigned char *state);
 extern void dr_uart_restore(unsigned base, unsigned char *state);
 extern void dr_uart_init(unsigned base, unsigned divisor);
 extern unsigned dr_uart_capability(unsigned base);
+extern unsigned dr_uart_rx_ready(unsigned base);
 extern unsigned dr_uart_get(unsigned base);
 extern void dr_uart_put(unsigned base, unsigned value);
 extern void dr_uart_drain(unsigned base);
+extern unsigned dr_key_ready(void);
+extern unsigned dr_key_get(void);
 
 struct replay_entry {
     int valid;
@@ -344,6 +349,7 @@ char *path;
            same_text(path, "DOSRAVI.OLD") ||
            same_text(path, "DOSRAVI.BAD") ||
            same_text(path, "UPDATE.PND") ||
+           same_text(path, "RAVI.BAT") ||
            same_text(path, "RAVILOAD.BAT");
 }
 
@@ -1501,11 +1507,12 @@ char *text;
     return 0;
 }
 
-static int configure(argc, argv, root, divisor)
+static int configure(argc, argv, root, divisor, com_port)
 int argc;
 char **argv;
 char **root;
 unsigned *divisor;
+unsigned *com_port;
 {
     int index;
     unsigned com_index;
@@ -1530,6 +1537,7 @@ unsigned *divisor;
         } else return 0;
     }
     uart_base = base_override ? base_override : dr_uart_bios_base(com_index);
+    *com_port = com_index + 1;
     return uart_base != 0;
 }
 
@@ -1539,8 +1547,12 @@ char **argv;
 {
     char *root;
     unsigned divisor;
+    unsigned com_port;
+    unsigned idle_polls;
+    dr_u32 idle_since;
     int decoded;
-    if (!configure(argc, argv, &root, &divisor)) {
+    int key;
+    if (!configure(argc, argv, &root, &divisor, &com_port)) {
         puts("Usage: DOSRAVI /COM1 [/BAUD:38400] [/ROOT:C:\\RAVI] [/BASE:3F8]");
         return 2;
     }
@@ -1555,14 +1567,40 @@ char **argv;
     dr_uart_save(uart_base, uart_state);
     uart_capability = dr_uart_capability(uart_base);
     dr_uart_init(uart_base, divisor);
+    printf("DOSRAVI %s\n", AGENT_VERSION);
+    printf("COM%u %lu BAUD 8N1 BASE %04X\n", com_port,
+           115200UL / divisor, uart_base);
+    printf("ROOT %s\n", root);
+    puts("READY - press Ctrl+C or Esc to quit locally");
+    fflush(stdout);
     requested_exit = 0;
     last_logged_command = 0;
     last_logged_path[0] = 0;
+    idle_polls = 0;
+    idle_since = bios_milliseconds();
     running = 1;
     while (running) {
+        if (!dr_uart_rx_ready(uart_base)) {
+            ++idle_polls;
+            if (idle_polls < LOCAL_KEY_POLL_SPINS) continue;
+            idle_polls = 0;
+            if (bios_milliseconds() - idle_since >= LOCAL_KEY_IDLE_MS &&
+                dr_key_ready()) {
+                key = dr_key_get();
+                if (key == 3 || key == 27) {
+                    puts("LOCAL QUIT");
+                    running = 0;
+                }
+            }
+            continue;
+        }
+        idle_polls = 0;
         decoded = dr_decoder_byte(&decoder, (dr_u8)dr_uart_get(uart_base),
                                   &request_frame);
-        if (decoded == 1) process_frame();
+        if (decoded == 1) {
+            process_frame();
+            idle_since = bios_milliseconds();
+        }
     }
     dr_uart_drain(uart_base);
     dr_uart_restore(uart_base, uart_state);

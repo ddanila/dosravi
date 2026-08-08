@@ -138,6 +138,10 @@ class IntegrationTests(unittest.TestCase):
         with self.assertRaises(RemoteError) as caught:
             self.client.remove("DOSRAVI.OLD")
         self.assertEqual(caught.exception.status, Status.DENIED)
+        (self.root / "remote" / "RAVI.BAT").write_bytes(b"launcher")
+        with self.assertRaises(RemoteError) as caught:
+            self.client.remove("RAVI.BAT")
+        self.assertEqual(caught.exception.status, Status.DENIED)
 
     def test_zero_transaction_is_rejected(self) -> None:
         with self.assertRaises(RemoteError) as caught:

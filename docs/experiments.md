@@ -53,7 +53,7 @@ different operation cannot reuse that directory.
 Programming additionally requires a documented rewritable device, endurance
 accounting, both existing authorization gates, device-appropriate VPP policy,
 changed/already-matching/retry/late-completion counts, separate programming and
-full verification times, complete verification, and ten normal accepted reads.
+full verification times, complete verification, and one normal fresh read.
 
 The write runner expects one final structured metric line (all values are
 unsigned decimal integers):
@@ -62,9 +62,12 @@ unsigned decimal integers):
 DOSRAVI_WRITE_METRIC program_ms=N verify_ms=N changed=N unchanged=N retry_bytes=N retries=N late=N image_crc32=8_HEX_DIGITS build_id=COMPILE_TIME_ID
 ```
 
-The log after that line must contain `Safe shutdown complete: VCC off, VPP
-off`. The host records the metric, removes the remote `WRITE.OK` token, and
-performs ten fresh full reads compared byte-for-byte with the requested image.
+The evidence after that line must contain `Safe shutdown complete: VCC off, VPP
+off`. The host prefers the current command's captured `STDOUT.TXT`, falling
+back to `WILLEM.LOG` for older evidence. It records the metric, removes the
+remote `WRITE.OK` token, and performs one fresh full read compared byte-for-byte
+with the requested image. `--post-write-count 2..10` is available for an
+explicit repeated-read experiment.
 For the initial 28C64 workflow, changed plus unchanged must cover all 8,192
 bytes, and retry-byte/late counts cannot exceed the changed-byte count.
 

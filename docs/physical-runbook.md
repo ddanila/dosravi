@@ -19,6 +19,11 @@ make verify
 The files to place initially in `C:\RAVI` are under `build/dist`. Review
 `HWSETUP.TXT` and `RAVILOAD.BAT` before enabling its AUTOEXEC line.
 
+On the already characterized Pocket8086 plus CP2102/MAX/null-modem setup,
+start the production agent without options by typing `RAVI`. Its wrapper fixes
+COM1, 57,600 baud, and `C:\RAVI`; the startup banner makes those effective
+settings visible. Press `Ctrl+C` or `Esc` for a local clean exit.
+
 ## 2. UART loopback characterization
 
 With the programmer disconnected and an RS-232 external loopback plug fitted,
@@ -84,5 +89,6 @@ accepted yet.
 РФ5 work remains read-only until the complete marking and exact datasheet
 determine capacity, pinout, voltage, socket placement, DIP settings, and timing.
 Writing remains locked to the documented 28C64 workflow, explicit `--write`,
-reviewed `WRITE.OK`, endurance/erase notes, complete verification, and ten
-post-write reads.
+reviewed `WRITE.OK`, endurance/erase notes, complete verification, and one
+fresh post-write read. Repeated reads remain an explicit experiment, not the
+standard write path.

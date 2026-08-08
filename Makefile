@@ -35,7 +35,7 @@ build/dos/dosmain.o: src/dosmain.c include/dosravi.h
 
 build/dos/dosmain-next.o: src/dosmain.c include/dosravi.h
 	mkdir -p build/dos
-	bcc $(DOSFLAGS) -DAGENT_VERSION='"0.1.1-test"' -Iinclude -c $< -o $@
+	bcc $(DOSFLAGS) -DAGENT_VERSION='"0.1.2-test"' -Iinclude -c $< -o $@
 
 build/dos/uart.o: src/uart.asm
 	mkdir -p build/dos

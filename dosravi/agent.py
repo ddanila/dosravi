@@ -159,6 +159,7 @@ class Agent:
             "DOSRAVI.OLD",
             "DOSRAVI.BAD",
             "UPDATE.PND",
+            "RAVI.BAT",
             "RAVILOAD.BAT",
         }
 
@@ -171,7 +172,7 @@ class Agent:
             if command == Command.INFO:
                 info = {
                     "agent": "reference",
-                    "version": "0.1.0",
+                    "version": "0.1.1",
                     "protocol": 1,
                     "machine": "python-reference",
                     "workspace": str(self.root),

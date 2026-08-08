@@ -28,6 +28,7 @@ required = {
     "COMPROBE.COM",
     "DOSRAVI.COM",
     "HWSETUP.TXT",
+    "RAVI.BAT",
     "RAVILOAD.BAT",
     "README.TXT",
 }

@@ -127,6 +127,14 @@ def _parser() -> argparse.ArgumentParser:
     write.add_argument("--gate", type=Path, required=True, help="reviewed WRITE.OK")
     write.add_argument("--lpt", default="378")
     write.add_argument("--read-profile", required=True)
+    write.add_argument(
+        "--post-write-count",
+        type=int,
+        choices=range(1, 11),
+        default=1,
+        metavar="1..10",
+        help="fresh reads after the writer's full verify (default: 1)",
+    )
     write.add_argument("--output", type=Path, required=True)
     write.add_argument(
         "--write", action="store_true", help="required explicit authorization"
@@ -475,11 +483,30 @@ def _validate_profile_step(previous: dict[str, Any], current: dict[str, Any]) ->
         raise ValueError("timing sweep must move from conservative to aggressive")
 
 
+def _parse_willem_write_evidence(
+    paths: tuple[Path, ...], expected_crc32: str
+) -> tuple[dict[str, Any], Path]:
+    failures: list[ValueError] = []
+    for evidence in paths:
+        if evidence.exists():
+            try:
+                return parse_willem_write_log(evidence, expected_crc32), evidence
+            except ValueError as exc:
+                failures.append(exc)
+    if failures:
+        raise failures[0]
+    raise ValueError("no local programming evidence exists")
+
+
 def _willem_read(
-    args: argparse.Namespace, client: Client, record: SessionRecord
+    args: argparse.Namespace,
+    client: Client,
+    record: SessionRecord,
+    *,
+    expected_count: int = 10,
 ) -> int:
-    if args.count != 10:
-        raise SystemExit("the acceptance runner requires exactly --count 10")
+    if args.count != expected_count:
+        raise SystemExit(f"this read runner requires exactly --count {expected_count}")
     legacy_current = getattr(args, "legacy_current", False)
     if legacy_current and args.profile:
         raise SystemExit("--legacy-current and --profile are mutually exclusive")
@@ -495,7 +522,7 @@ def _willem_read(
         record.add_artifact(args.trusted, "trusted-reference")
     trusted_sha256 = sha256_file(args.trusted) if args.trusted is not None else "none"
     command_arguments = []
-    for index in range(1, 11):
+    for index in range(1, args.count + 1):
         image_name = f"READ{index:02d}.BIN"
         command_args = f"R{args.device} {image_name} {args.lpt}"
         if args.profile:
@@ -516,7 +543,7 @@ def _willem_read(
     trials: list[dict[str, Any]] = []
     record.programmer_stats["acceptance_passed"] = False
     record.programmer_stats["trials"] = trials
-    for index in range(1, 11):
+    for index in range(1, args.count + 1):
         image_name = f"READ{index:02d}.BIN"
         command_args = command_arguments[index - 1]
         result = client.execute("WILLEM.COM", command_args, execution_ids[index - 1])
@@ -763,9 +790,14 @@ def _willem_write(
     write_dir = args.output / "programming"
     write_dir.mkdir(parents=True, exist_ok=True)
     log = write_dir / "WILLEM.LOG"
-    if log.exists():
+    stdout = write_dir / "STDOUT.TXT"
+    evidence_paths = (stdout, log)
+
+    if any(path.exists() for path in evidence_paths):
         try:
-            write_metrics = parse_willem_write_log(log, image_crc32)
+            write_metrics, write_evidence = _parse_willem_write_evidence(
+                evidence_paths, image_crc32
+            )
         except ValueError as exc:
             raise RuntimeError(
                 "existing programming evidence is invalid; preserve it and use a new output directory"
@@ -794,8 +826,12 @@ def _willem_write(
             raise RuntimeError(
                 f"Willem programming failed with status {result.exit_code}"
             )
-        write_metrics = parse_willem_write_log(log, image_crc32)
-    record.add_artifact(log, f"{args.output.name}/programming/WILLEM.LOG")
+        write_metrics, write_evidence = _parse_willem_write_evidence(
+            evidence_paths, image_crc32
+        )
+    record.programmer_stats["write_evidence"] = write_evidence.name
+    if log.exists():
+        record.add_artifact(log, f"{args.output.name}/programming/WILLEM.LOG")
     if int(write_metrics["changed"]) + int(write_metrics["unchanged"]) != 8192:
         raise ValueError("write metric byte counts do not cover the complete 28C64")
     if int(write_metrics["retry_bytes"]) > int(write_metrics["changed"]) or int(
@@ -804,21 +840,20 @@ def _willem_write(
         raise ValueError("write metric retry/late counts exceed changed bytes")
     record.programmer_stats["write"] = write_metrics
 
-    # Independent full verification is part of the write metric, then the
-    # normal accepted read path performs ten fresh power cycles and compares
-    # every byte against the requested image.
+    # Independent full verification is part of the write metric. Follow it
+    # with the requested number of fresh reads; one is the normal default.
     read_args = argparse.Namespace(
         program=args.program,
         device=args.device,
         lpt=args.lpt,
-        count=10,
+        count=args.post_write_count,
         output=args.output / "post-write-reads",
         trusted=args.image,
         profile=args.read_profile,
         trace_on_failure=args.trace_on_failure,
         legacy_current=False,
     )
-    _willem_read(read_args, client, record)
+    _willem_read(read_args, client, record, expected_count=args.post_write_count)
     record.programmer_stats["write_passed"] = True
     record.exit_status = 0
     return 0
