@@ -79,6 +79,7 @@ test_local_quit() {
         -c "ECHO RETURNED>RETURN.OK" \
         -c "exit" >"$drive/DOSBOX.OUT" 2>&1
     grep -q 'DOSRAVI 0.1.1' "$drive/RAVI/STARTUP.TXT"
+    grep -q 'BUILD uart-txdiag-v1 FIFO' "$drive/RAVI/STARTUP.TXT"
     grep -q 'COM1 38400 BAUD 8N1 BASE 03f8' "$drive/RAVI/STARTUP.TXT"
     grep -q 'ROOT C:\\RAVI' "$drive/RAVI/STARTUP.TXT"
     grep -q 'LOCAL QUIT' "$drive/RAVI/STARTUP.TXT"

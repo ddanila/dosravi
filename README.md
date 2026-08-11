@@ -62,6 +62,11 @@ dosravi --serial /dev/ttyUSB0 willem-sweep \
 Ordinary frame retries use `--timeout`; a received EXEC `STARTED` event switches
 to the separate bounded `--exec-timeout` (300 seconds by default) without
 retransmitting while the DOS child is running.
+Use a larger bound for full EEPROM changes: the recorded 8 KiB AT28C64
+write-plus-built-in-verify took about 393 seconds, so the later paired write
+used `--exec-timeout 900`. A timeout does not authorize rerunning the child;
+retrieve the persistent execution ID first, because the original operation may
+already have completed and cached its result.
 Session runners persist execution IDs before launch. Generic one-off `exec` and
 `run` also accept `--execution-id 0x...` when an external workflow owns the
 restart journal.
@@ -95,12 +100,23 @@ the requested image using the selected read profile. Use
 `--post-write-count 2..10` only when a deliberately repeated endurance or
 profile experiment calls for it.
 
+The 2026-08-11 Ekta4401 pair used the normal single built-in post-write verify,
+not extra endurance reads. D15 verified CRC32 `5E306759` with 8,167 changed
+bytes; D16 verified CRC32 `3B734DEC` with 8,173 changed bytes. Both covered
+8,192/8,192 bytes, needed zero retries, and ended with VCC/VPP off.
+
 The foreground DOS agent prints its version, selected COM port and UART base,
 baud rate, workspace, and local quit keys when it starts. Press `Ctrl+C` or
 `Esc` to restore the saved UART state and return to DOS; the host-side `quit`
 command remains available. Local keys are polled only after 500 ms without a
 complete protocol command; frame reception, response transmission, and child
 execution are not interrupted.
+
+Build `uart-txdiag-v1` also prints the UART FIFO/LSR startup snapshot. For
+PING and INFO it brackets every original or replayed response with `TX ...
+BEGIN` and `TX ... END`, including encoded length, response flags and LSR.
+This keeps bulk transfers terse while distinguishing a blocked DOS UART send
+from loss or corruption after the transmitter.
 
 The agent can update itself without touching the laptop:
 

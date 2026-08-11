@@ -15,6 +15,7 @@
 #ifndef AGENT_VERSION
 #define AGENT_VERSION "0.1.1"
 #endif
+#define AGENT_BUILD "uart-txdiag-v1"
 #define DEFAULT_BAUD 38400UL
 #define DEFAULT_CHUNK 512U
 #define MAX_CHUNK 1024U
@@ -74,6 +75,7 @@ extern void dr_uart_restore(unsigned base, unsigned char *state);
 extern void dr_uart_init(unsigned base, unsigned divisor);
 extern unsigned dr_uart_capability(unsigned base);
 extern unsigned dr_uart_rx_ready(unsigned base);
+extern unsigned dr_uart_lsr(unsigned base);
 extern unsigned dr_uart_get(unsigned base);
 extern void dr_uart_put(unsigned base, unsigned value);
 extern void dr_uart_drain(unsigned base);
@@ -220,12 +222,26 @@ char *prefix;
 static void uart_send(frame)
 dr_frame *frame;
 {
+    int command;
+    int debug;
     int length;
     int index;
     length = dr_frame_encode(frame, encoded_frame, sizeof(encoded_frame));
     if (length < 0) return;
+    command = frame->payload_length ? frame->payload[0] : 0;
+    debug = command == CMD_PING || command == CMD_INFO;
+    if (debug) {
+        printf("TX CMD %02X BEGIN bytes=%d flags=%02X LSR=%02X\n",
+               command, length, frame->flags, dr_uart_lsr(uart_base));
+        fflush(stdout);
+    }
     for (index = 0; index < length; ++index)
         dr_uart_put(uart_base, encoded_frame[index]);
+    if (debug) {
+        printf("TX CMD %02X END bytes=%d flags=%02X LSR=%02X\n",
+               command, length, frame->flags, dr_uart_lsr(uart_base));
+        fflush(stdout);
+    }
 }
 
 static void response_begin(command, status)
@@ -798,7 +814,7 @@ static void handle_info()
     union REGS output;
     dr_u32 free_bytes;
     dr_u32 free_memory;
-    char info[384];
+    char info[416];
     unsigned dos_major;
     unsigned dos_minor;
     unsigned equipment_word;
@@ -822,6 +838,7 @@ static void handle_info()
     free_memory = (dr_u32)output.x.bx * 16UL;
     sprintf(info,
             "{\"agent\":\"DOSRAVI.COM\",\"version\":\"%s\","
+            "\"build\":\"%s\","
             "\"protocol\":1,\"dos\":\"%u.%u\","
             "\"bios_equipment_word\":%u,\"conventional_kb\":%u,"
             "\"com_base\":%u,"
@@ -829,7 +846,7 @@ static void handle_info()
             "\"free_disk\":%lu,\"chunk_size\":%u,"
             "\"capabilities\":[\"replay\",\"resume\",\"exec-capture\","
             "\"self-update\"]}",
-            AGENT_VERSION, dos_major, dos_minor, equipment_word,
+            AGENT_VERSION, AGENT_BUILD, dos_major, dos_minor, equipment_word,
             conventional_kb, uart_base, uart_capability, free_memory,
             free_bytes, DEFAULT_CHUNK);
     response_begin(CMD_INFO, STATUS_OK);
@@ -1568,6 +1585,8 @@ char **argv;
     uart_capability = dr_uart_capability(uart_base);
     dr_uart_init(uart_base, divisor);
     printf("DOSRAVI %s\n", AGENT_VERSION);
+    printf("BUILD %s FIFO %02X LSR %02X\n", AGENT_BUILD, uart_capability,
+           dr_uart_lsr(uart_base));
     printf("COM%u %lu BAUD 8N1 BASE %04X\n", com_port,
            115200UL / divisor, uart_base);
     printf("ROOT %s\n", root);

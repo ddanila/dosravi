@@ -1,17 +1,17 @@
 # Implementation status
 
-Status reviewed 2026-08-09. `make verify` is the local acceptance command.
+Status reviewed 2026-08-11. `make verify` is the local acceptance command.
 
 | Milestone | State | Evidence or remaining gate |
 |---|---|---|
 | M0 repository/contracts | Verified | The public `ddanila/dosravi` repository, MIT license, layout, CI, protocol, safety model, and explicit boundary from the separately built GPL `WILLEM.COM` are established. |
-| M1 UART characterization | Physical link accepted; inventory partial | Pocket8086 COM1 is 03F8h and reports a 16550A-compatible FIFO with internal loopback PASS. The CP2102/MAX RS-232 path passed three zero-retry 32 KiB hash-verified round trips at 57,600 baud; 115,200 passed short requests but failed sustained 512-byte frames. Exact connector/pin recording and external-loopback evidence remain. |
+| M1 UART characterization | Physical link accepted; inventory partial | Pocket8086 COM1 is 03F8h and reports a 16550A-compatible FIFO with internal and external loopback PASS. The CP2102/MAX/RS-232-to-TTL chain also passed loopback. A marginal USB cable produced requests without usable replies and one corrupted INFO byte; after cable replacement, three 4 KiB link passes and a post-restart 1 KiB pass were exact at 57,600 baud. The earlier 32 KiB soak also passed; 115,200 remains unsuitable for sustained 512-byte frames. Exact connector/pin recording remains. |
 | M2 protocol/emulator | Verified | Cross-language framing fixtures, CRCs, bounded decoder, retry/replay/resume, raw logs, property tests, fault injection, and DOSBox-X TCP null-modem tests pass, including a 64 KiB round trip across the dev86 runtime's 32 KiB file-position boundary. |
 | M3 deploy/execute/update | Verified | Headless 8086 and 80186 DOSBox-X runs cover interrupted PUT, resumed GET, path rejection, duplicate transaction/execution replay, child output/artifact/status collection, update confirmation, retained fallback, boot rollback, and clean launcher return. A physical two-phase update also promoted a replacement while retaining `DOSRAVI.OLD`. |
-| M4 current Willem | Emulator diagnostic verified; hardware pending | The unmodified Willem 0.0.5 diagnostic completed headlessly through file-backed stdin; stdout/stderr, append log, and trace were retrieved and hashed with safe shutdown. The legacy ten-read parser exists. It still needs the real programmer, supported known chip, and trusted expected image. |
+| M4 current Willem | Physical programmer path verified; legacy baseline pending | The real Willem programmed and verified three AT28C64 images through headless DOSRAVI with structured metrics and safe shutdown. The unmodified Willem 0.0.5 diagnostic also completes in emulation through file-backed stdin, with stdout/stderr, append log, and trace retrieval. Its separate legacy ten-read acceptance baseline still needs the complete programmer/cable inventory and a deliberately selected trusted read image. |
 | M5 speed characterization | Emulator integration verified; hardware pending | The host sweep enforces one decreasing read dimension per adjacent table (including power stabilization), stable build identity, first-failure stop, trace rerun, drift check, and slower production reacceptance. The `willem-v30` `dosravi-timing-profiles` branch at `589033f` supplies audited tables plus local PIT read/write metrics; its binary passed 8086/80186 DOSBox-X and live headless DOSRAVI upload/EXEC/artifact parsing, including the 28C64 `powerfast` record. Physical ten-read sweeps remain required. |
 | M6 РФ5 showcase | Hardware pending | No device may be inferred from the family name. Complete chip markings, exact datasheet, socket/switch/power facts, and a trustworthy reference method are required before read-only Willem support or trials. |
-| M7 controlled write | Physical T31 write verified | On 2026-08-09 an AT28C64B was gated from two exact T32 reads, programmed with T31, fully verified by Willem, and confirmed by one fresh full read. The host accepts only 28C64, requires `--write`, `WRITE.OK`, hardware/endurance notes, structured local write/verify metrics, safe shutdown proof, and one post-write read. Current stdout is authoritative when an oversized legacy `WILLEM.LOG` cannot append. |
+| M7 controlled write | Multiple physical writes verified | On 2026-08-09 an AT28C64B was gated from exact reads, programmed with T31, and independently checked. On 2026-08-11 the Ekta4401 D15/D16 pair each passed Willem's single built-in full verify with zero retries and safe VCC/VPP shutdown. The host accepts only 28C64, requires `--write`, `WRITE.OK`, hardware/endurance notes, structured local write/verify metrics, and safe shutdown proof. Extra post-write reads are optional and were deliberately omitted for the Ekta pair. |
 
 ## Local verification completed
 
@@ -35,9 +35,14 @@ For the milestones still awaiting physical closure, record:
    baseline.
 4. Complete РФ5 markings and exact datasheet/reference-programmer information.
 
-The completed M7 write already retained the exact chip marking/datasheet,
-endurance and erase notes, reviewed `WRITE.OK` derivation, audited Willem
-algorithm/profile, complete verify metrics, and independent post-read identity.
+The completed M7 writes retained the exact chip/image identities, reviewed
+`WRITE.OK` derivation, audited Willem algorithm/profile, complete verify
+metrics, and safe shutdown. The Ekta4401 results were D15 CRC32 `5E306759`,
+8,167 changed/25 unchanged, and D16 CRC32 `3B734DEC`, 8,173 changed/19
+unchanged; both verified 8,192/8,192 with zero retries. D15's approximately
+393-second child run exceeded the former 300-second host wait, but its
+persistent execution ID recovered the cached success without executing twice.
+D16 used a 900-second execution timeout and completed normally.
 
 Store each run in a dedicated session directory. A failed or interrupted
 physical run remains evidence and must not be replaced by an emulator claim.

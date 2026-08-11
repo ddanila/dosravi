@@ -165,6 +165,7 @@ def main() -> int:
     info = client.info()
     assert info["protocol"] == 1
     assert info["agent"] == "DOSRAVI.COM"
+    assert info["build"] == "uart-txdiag-v1"
     assert info["conventional_kb"] >= 128
     assert isinstance(info["bios_equipment_word"], int)
     # Reuse the same transaction to exercise encoded response replay.

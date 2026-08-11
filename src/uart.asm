@@ -8,6 +8,7 @@ GLOBAL _dr_uart_restore
 GLOBAL _dr_uart_init
 GLOBAL _dr_uart_capability
 GLOBAL _dr_uart_rx_ready
+GLOBAL _dr_uart_lsr
 GLOBAL _dr_uart_get
 GLOBAL _dr_uart_put
 GLOBAL _dr_uart_drain
@@ -191,6 +192,17 @@ _dr_uart_rx_ready:
     add dx, 5
     in al, dx
     and ax, 1
+    pop bp
+    ret
+
+; unsigned dr_uart_lsr(unsigned base), raw line-status register snapshot.
+_dr_uart_lsr:
+    push bp
+    mov bp, sp
+    mov dx, [bp+4]
+    add dx, 5
+    in al, dx
+    xor ah, ah
     pop bp
     ret
 

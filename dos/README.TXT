@@ -15,6 +15,12 @@ The agent prints its version, port, baud, UART base, workspace, and READY when
 it starts. Press Ctrl+C or Esc to restore the UART and return to DOS. A remote
 QUIT command remains supported.
 
+Diagnostic build uart-txdiag-v1 also prints the startup FIFO and LSR values.
+Every PING or INFO response is bracketed by TX CMD BEGIN and TX CMD END lines.
+The lines include its encoded byte count, flags, and LSR. Flags 02 means a
+cached response to a repeated request. BEGIN without END means the DOS UART
+send stalled; matching BEGIN and END means transmission completed locally.
+
 Valid rates are 9600, 19200, 38400, 57600, and 115200. /BASE:3F8 overrides
 the BIOS COM base only when hardware inspection proves that it is necessary.
 QUIT restores readable UART registers and returns to DOS.
