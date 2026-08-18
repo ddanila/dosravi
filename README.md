@@ -105,6 +105,12 @@ not extra endurance reads. D15 verified CRC32 `5E306759` with 8,167 changed
 bytes; D16 verified CRC32 `3B734DEC` with 8,173 changed bytes. Both covered
 8,192/8,192 bytes, needed zero retries, and ended with VCC/VPP off.
 
+The 2026-08-18 JukuNet C6 pair used the same one-built-in-verify policy. D15
+verified CRC32 `A1DC319C` with 3,151 changed and 5,041 unchanged bytes; D16
+verified CRC32 `2D9CE4D5` with 4,529 changed and 3,663 unchanged bytes. Both
+covered 8,192/8,192 bytes, reported zero retry bytes, retries, and late
+completions, and ended with VCC/VPP off. No redundant post-write read was run.
+
 The foreground DOS agent prints its version, selected COM port and UART base,
 baud rate, workspace, and local quit keys when it starts. Press `Ctrl+C` or
 `Esc` to restore the saved UART state and return to DOS; the host-side `quit`
