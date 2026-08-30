@@ -91,14 +91,34 @@ append-log format and reports its coarse local power-on-to-safe-shutdown window.
 It is labeled as legacy timing and is not used for optimized-profile claims.
 
 Programming is deliberately narrower than reading. `willem-write` accepts
-only `28C64`, requires `--write`, uploads a reviewed `WRITE.OK` token, and
-requires recorded `endurance`, `erase-requirements`, and `chip-marking` notes.
+`28C64` and the exact ST `M2764A` algorithm, requires `--write`, uploads a
+reviewed device-specific gate, and requires recorded `endurance`,
+`erase-requirements`, and `chip-marking` notes.
 It accepts the result only when the current execution capture (or its
 `WILLEM.LOG` fallback) contains a structured `DOSRAVI_WRITE_METRIC` record
 followed by proof of VCC/VPP shutdown, then performs one fresh full read against
 the requested image using the selected read profile. Use
 `--post-write-count 2..10` only when a deliberately repeated endurance or
 profile experiment calls for it.
+
+M2764A is a two-stage exception because the Willem regulator cannot switch
+from the data-sheet's 6 V programming condition to 5 V read verification in
+software. Its run additionally requires `--program-phase-only`, `M2764A.OK`,
+and notes for measured VCC/VPP, ambient temperature, rail measurement, and the
+blank check. DOSRAVI accepts only structured high-voltage-phase evidence with
+safe shutdown, records `final_5v_verify_required=true`, leaves
+`write_passed=false`, and does not launch a misleading read at 6 V. After an
+unpowered manual change to normal 5 V/VPP=VCC, use
+`willem-read --device 2764 --trusted IMAGE --count 1 --final-verify` with
+`final-vcc=5V` and `final-vpp=VCC` notes as the final stage.
+
+This two-stage path was physically accepted on 2026-08-26 with four ST
+M2764AF1 devices programmed as two standard EktaSoft 3.7 D15/D16 pairs. The
+recorded setup used 5.74 V programming VCC under the explicit marginal-voltage
+gate, 12.66 V VPP, 21 C ambient, and a separately measured 5.07 V read setting.
+All four high-voltage phases and all four later trusted reads passed with safe
+shutdown. The retained sessions also prove that a nonblank byte and residual
+bytes after an interrupted attempt stop the run before VPP.
 
 The 2026-08-11 Ekta4401 pair used the normal single built-in post-write verify,
 not extra endurance reads. D15 verified CRC32 `5E306759` with 8,167 changed

@@ -79,3 +79,21 @@ of these records is absent.
 Device, LPT, and profile values are restricted to single validated DOS tokens;
 they cannot smuggle additional command-tail switches. A supplied trusted image
 is stored in the session artifact manifest with CRC-32 and SHA-256.
+
+For ST M2764A, `willem-write --device M2764A` requires the additional
+`--program-phase-only` hold plus `programming-vcc`, `programming-vpp`,
+`ambient-temperature`, `rail-measurement`, and `blank-check` notes. It uploads
+the separate `M2764A.OK` token, parses `DOSRAVI_M2764A_METRIC`, and stops after
+safe shutdown with final 5 V verification still required. The later normal-rail
+`willem-read --device 2764 --trusted ... --count 1 --final-verify` is a
+separate recorded session requiring `final-vcc` and `final-vpp` notes;
+high-voltage byte verification is not substituted for it.
+
+The first physical use on 2026-08-26 programmed four M2764AF1 devices as two
+EktaSoft 3.7 D15/D16 pairs. Every accepted program phase reported a complete
+blank scan, one initial pulse and one overprogram pulse per changed byte, zero
+retries, complete high-voltage comparison, and safe shutdown; every later
+normal-rail trusted read matched. The retained failure evidence is equally
+important: one nonblank candidate and residual bytes after an interrupted run
+were rejected before VPP, and the latter device was accepted only after a
+longer second UV erase produced an all-FF scan.

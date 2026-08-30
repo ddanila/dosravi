@@ -88,7 +88,12 @@ accepted yet.
 
 РФ5 work remains read-only until the complete marking and exact datasheet
 determine capacity, pinout, voltage, socket placement, DIP settings, and timing.
-Writing remains locked to the documented 28C64 workflow, explicit `--write`,
-reviewed `WRITE.OK`, endurance/erase notes, complete verification, and one
-fresh post-write read. Repeated reads remain an explicit experiment, not the
-standard write path.
+28C64 writing remains locked to explicit `--write`, reviewed `WRITE.OK`,
+endurance/erase notes, complete verification, and one fresh post-write read.
+The reference PCB5.0E physically completed the ST M2764A workflow on four
+M2764AF1 devices. Its measured 5.74 V programming VCC was deliberately below
+the normal gate and required `--allow-marginal-vcc`; 12.66 V VPP was in range.
+That evidence does not waive the empty-socket measurement for another board or
+setting. The separate gate and `--program-phase-only` workflow must still power
+down before the operator changes to normal 5 V/VPP=VCC for a trusted read.
+Repeated reads remain an explicit experiment.

@@ -306,3 +306,57 @@ def parse_willem_write_log(
     result["build_id"] = build_id
     result["safe_shutdown"] = True
     return result
+
+
+def parse_m2764a_program_log(
+    path: Path,
+    expected_image_crc32: str | None = None,
+) -> dict[str, int | bool | str]:
+    """Parse evidence for the high-voltage phase of ST's fast algorithm."""
+
+    text = path.read_text(encoding="ascii", errors="replace")
+    matches = list(
+        re.finditer(
+            r"DOSRAVI_M2764A_METRIC\s+program_ms=(\d+)"
+            r"\s+high_voltage_verify_ms=(\d+)\s+programmed=(\d+)"
+            r"\s+ff_skipped=(\d+)\s+initial_pulses=(\d+)"
+            r"\s+retry_bytes=(\d+)\s+retries=(\d+)"
+            r"\s+overprogram_pulses=(\d+)\s+max_initial=(\d+)"
+            r"\s+blank_mismatches=(\d+)"
+            r"\s+image_crc32=([0-9a-fA-F]{8})"
+            r"\s+final_5v_verify_required=1"
+            r"\s+build_id=([A-Za-z0-9_.-]+)",
+            text,
+        )
+    )
+    if not matches:
+        raise ValueError("WILLEM.LOG has no structured M2764A programming metric")
+    match = matches[-1]
+    tail = text[match.start() :]
+    if "Safe shutdown complete: VCC off, VPP off" not in tail:
+        raise ValueError("WILLEM.LOG does not prove safe shutdown after programming")
+    if "FINAL 5V/VPP=5V VERIFY IS REQUIRED" not in tail:
+        raise ValueError("WILLEM.LOG does not retain the mandatory final-verify hold")
+    integer_names = (
+        "program_ms",
+        "high_voltage_verify_ms",
+        "programmed",
+        "ff_skipped",
+        "initial_pulses",
+        "retry_bytes",
+        "retries",
+        "overprogram_pulses",
+        "max_initial",
+        "blank_mismatches",
+    )
+    result: dict[str, int | bool | str] = {
+        name: int(value) for name, value in zip(integer_names, match.groups()[:10])
+    }
+    image_crc32 = match.group(11).lower()
+    if expected_image_crc32 is not None and image_crc32 != expected_image_crc32.lower():
+        raise ValueError("WILLEM.LOG write image identity does not match request")
+    result["image_crc32"] = image_crc32
+    result["build_id"] = match.group(12)
+    result["safe_shutdown"] = True
+    result["final_5v_verify_required"] = True
+    return result

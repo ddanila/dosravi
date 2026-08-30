@@ -21,6 +21,7 @@ from .session import (
     SessionRecord,
     crc32_file,
     parse_legacy_willem_log,
+    parse_m2764a_program_log,
     parse_willem_log,
     parse_willem_write_log,
     sha256_file,
@@ -106,6 +107,11 @@ def _parser() -> argparse.ArgumentParser:
         help="parse the unmodified Willem 0.0.5 append-log baseline",
     )
     willem.add_argument("--trace-on-failure", action="store_true")
+    willem.add_argument(
+        "--final-verify",
+        action="store_true",
+        help="allow one trusted read as a separately powered final write verify",
+    )
     willem.add_argument("--note", action="append", default=[], metavar="KEY=VALUE")
     sweep = sub.add_parser("willem-sweep")
     sweep.add_argument("--program", type=Path, required=True)
@@ -122,9 +128,11 @@ def _parser() -> argparse.ArgumentParser:
     sweep.add_argument("--note", action="append", default=[], metavar="KEY=VALUE")
     write = sub.add_parser("willem-write")
     write.add_argument("--program", type=Path, required=True)
-    write.add_argument("--device", choices=("28C64",), required=True)
+    write.add_argument("--device", choices=("28C64", "M2764A"), required=True)
     write.add_argument("--image", type=Path, required=True)
-    write.add_argument("--gate", type=Path, required=True, help="reviewed WRITE.OK")
+    write.add_argument(
+        "--gate", type=Path, required=True, help="reviewed device-specific gate"
+    )
     write.add_argument("--lpt", default="378")
     write.add_argument("--read-profile", required=True)
     write.add_argument(
@@ -138,6 +146,11 @@ def _parser() -> argparse.ArgumentParser:
     write.add_argument("--output", type=Path, required=True)
     write.add_argument(
         "--write", action="store_true", help="required explicit authorization"
+    )
+    write.add_argument(
+        "--program-phase-only",
+        action="store_true",
+        help="required for M2764A; stop powered down before manual 5 V setup",
     )
     write.add_argument("--trace-on-failure", action="store_true")
     write.add_argument("--note", action="append", default=[], metavar="KEY=VALUE")
@@ -484,13 +497,18 @@ def _validate_profile_step(previous: dict[str, Any], current: dict[str, Any]) ->
 
 
 def _parse_willem_write_evidence(
-    paths: tuple[Path, ...], expected_crc32: str
+    paths: tuple[Path, ...], expected_crc32: str, device: str = "28C64"
 ) -> tuple[dict[str, Any], Path]:
     failures: list[ValueError] = []
     for evidence in paths:
         if evidence.exists():
             try:
-                return parse_willem_write_log(evidence, expected_crc32), evidence
+                parser = (
+                    parse_m2764a_program_log
+                    if device == "M2764A"
+                    else parse_willem_write_log
+                )
+                return parser(evidence, expected_crc32), evidence
             except ValueError as exc:
                 failures.append(exc)
     if failures:
@@ -505,6 +523,12 @@ def _willem_read(
     *,
     expected_count: int = 10,
 ) -> int:
+    final_verify = getattr(args, "final_verify", False)
+    if final_verify:
+        if args.trusted is None:
+            raise SystemExit("--final-verify requires --trusted")
+        if expected_count != 1:
+            raise SystemExit("--final-verify requires a one-read workflow")
     if args.count != expected_count:
         raise SystemExit(f"this read runner requires exactly --count {expected_count}")
     legacy_current = getattr(args, "legacy_current", False)
@@ -625,6 +649,8 @@ def _willem_read(
             raise
     record.programmer_stats["local_read_timing"] = timing_summary(timings)
     record.programmer_stats["acceptance_passed"] = True
+    if final_verify:
+        record.programmer_stats["final_5v_verify_passed"] = True
     record.exit_status = 0
     return 0
 
@@ -756,16 +782,23 @@ def _willem_write(
 ) -> int:
     if not args.write:
         raise SystemExit("willem-write requires the explicit --write authorization")
+    if args.device == "M2764A" and not args.program_phase_only:
+        raise SystemExit(
+            "M2764A requires --program-phase-only because final verification needs a manual 6 V to 5 V hardware change"
+        )
+    if args.device == "28C64" and args.program_phase_only:
+        raise SystemExit("--program-phase-only is only valid for M2764A")
     _validate_willem_tokens(args.device, args.lpt, args.read_profile)
     if args.image.stat().st_size != 8192:
-        raise SystemExit("28C64 programming image must be exactly 8192 bytes")
+        raise SystemExit(f"{args.device} programming image must be exactly 8192 bytes")
     if not 1 <= args.gate.stat().st_size <= 512:
-        raise SystemExit("reviewed WRITE.OK gate must contain 1..512 bytes")
+        raise SystemExit("reviewed write gate must contain 1..512 bytes")
     args.output.mkdir(parents=True, exist_ok=True)
     record.programmer_stats["write_passed"] = False
     program_sha256 = sha256_file(args.program)
     image_crc32 = f"{crc32_file(args.image):08x}"
     command_args = f"W{args.device} TARGET.BIN {args.lpt} /WRITE"
+    remote_gate = "M2764A.OK" if args.device == "M2764A" else "WRITE.OK"
     write_identity = json.dumps(
         {
             "program_sha256": program_sha256,
@@ -783,7 +816,7 @@ def _willem_write(
     inputs = (
         (args.program, "WILLEM.COM"),
         (args.image, "TARGET.BIN"),
-        (args.gate, "WRITE.OK"),
+        (args.gate, remote_gate),
     )
     for local, remote in inputs:
         record.add_artifact(local, f"upload:{remote}")
@@ -796,7 +829,7 @@ def _willem_write(
     if any(path.exists() for path in evidence_paths):
         try:
             write_metrics, write_evidence = _parse_willem_write_evidence(
-                evidence_paths, image_crc32
+                evidence_paths, image_crc32, args.device
             )
         except ValueError as exc:
             raise RuntimeError(
@@ -812,7 +845,7 @@ def _willem_write(
         # WILLEM must consume its gate; removal here narrows accidental reuse
         # if the child left it behind after returning.
         try:
-            client.remove("WRITE.OK")
+            client.remove(remote_gate)
         except RemoteError as exc:
             if exc.status != Status.NOT_FOUND:
                 raise
@@ -827,18 +860,36 @@ def _willem_write(
                 f"Willem programming failed with status {result.exit_code}"
             )
         write_metrics, write_evidence = _parse_willem_write_evidence(
-            evidence_paths, image_crc32
+            evidence_paths, image_crc32, args.device
         )
     record.programmer_stats["write_evidence"] = write_evidence.name
     if log.exists():
         record.add_artifact(log, f"{args.output.name}/programming/WILLEM.LOG")
-    if int(write_metrics["changed"]) + int(write_metrics["unchanged"]) != 8192:
-        raise ValueError("write metric byte counts do not cover the complete 28C64")
-    if int(write_metrics["retry_bytes"]) > int(write_metrics["changed"]) or int(
-        write_metrics["late"]
-    ) > int(write_metrics["changed"]):
-        raise ValueError("write metric retry/late counts exceed changed bytes")
+    changed_key = "programmed" if args.device == "M2764A" else "changed"
+    unchanged_key = "ff_skipped" if args.device == "M2764A" else "unchanged"
+    if int(write_metrics[changed_key]) + int(write_metrics[unchanged_key]) != 8192:
+        raise ValueError(
+            f"write metric byte counts do not cover the complete {args.device}"
+        )
+    if int(write_metrics["retry_bytes"]) > int(write_metrics[changed_key]):
+        raise ValueError("write metric retry-byte count exceeds programmed bytes")
+    if args.device == "28C64" and int(write_metrics["late"]) > int(
+        write_metrics[changed_key]
+    ):
+        raise ValueError("write metric late count exceeds changed bytes")
     record.programmer_stats["write"] = write_metrics
+
+    if args.device == "M2764A":
+        if int(write_metrics["blank_mismatches"]):
+            raise ValueError("M2764A programming evidence reports a failed blank check")
+        if int(write_metrics["overprogram_pulses"]) != int(write_metrics["programmed"]):
+            raise ValueError("M2764A did not record one overprogram pulse per byte")
+        if not 0 <= int(write_metrics["max_initial"]) <= 25:
+            raise ValueError("M2764A initial-pulse maximum is outside 0..25")
+        record.programmer_stats["program_phase_passed"] = True
+        record.programmer_stats["final_5v_verify_required"] = True
+        record.exit_status = 0
+        return 0
 
     # Independent full verification is part of the write metric. Follow it
     # with the requested number of fresh reads; one is the normal default.
@@ -882,6 +933,18 @@ def main(argv: list[str] | None = None) -> int:
         }
         if args.command == "willem-write":
             required_notes.update({"endurance", "erase-requirements"})
+            if args.device == "M2764A":
+                required_notes.update(
+                    {
+                        "ambient-temperature",
+                        "blank-check",
+                        "programming-vcc",
+                        "programming-vpp",
+                        "rail-measurement",
+                    }
+                )
+        if args.command == "willem-read" and args.final_verify:
+            required_notes.update({"final-vcc", "final-vpp"})
         missing_notes = sorted(required_notes - notes.keys())
         if missing_notes:
             raise SystemExit(
@@ -948,7 +1011,12 @@ def main(argv: list[str] | None = None) -> int:
                 record.hardware_notes.update(notes)
             if args.command == "willem-read":
                 assert record is not None
-                status = _willem_read(args, client, record)
+                status = _willem_read(
+                    args,
+                    client,
+                    record,
+                    expected_count=1 if args.final_verify else 10,
+                )
             elif args.command == "willem-sweep":
                 assert record is not None
                 status = _willem_sweep(args, client, record)
