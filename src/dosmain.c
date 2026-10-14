@@ -1623,5 +1623,15 @@ char **argv;
     }
     dr_uart_drain(uart_base);
     dr_uart_restore(uart_base, uart_state);
+    /* The bcc runtime cleanup path loses status 85 after captured EXEC in
+       the restart regression. Flush while our state is live, then let DOS
+       close process handles and return the exact launcher status directly. */
+    {
+        union REGS input;
+        union REGS output;
+        fflush((FILE *)0);
+        input.x.ax = 0x4c00U | (unsigned)requested_exit;
+        int86(0x21, &input, &output);
+    }
     return requested_exit;
 }

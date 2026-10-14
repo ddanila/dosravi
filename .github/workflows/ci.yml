@@ -1,17 +1,51 @@
 name: CI
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   native:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: sudo apt-get update && sudo apt-get install -y afl++ bcc bin86 clang cppcheck nasm
-      - run: python -m pip install -e '.[test]'
-      - run: make check
-      - run: make fuzz
-      - run: make dos
+      - name: Select checks
+        id: checks
+        run: python tools/select_ci.py
+      - name: Install native toolchain
+        if: steps.checks.outputs.native == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bcc bin86 cppcheck nasm
+          python -m pip install -e '.[test]'
+      - name: Native contracts and static checks
+        if: steps.checks.outputs.native == 'true'
+        run: make check
+      - name: Decoder fuzz smoke
+        if: steps.checks.outputs.fuzz == 'true'
+        timeout-minutes: 3
+        run: |
+          sudo apt-get install -y --no-install-recommends afl++ clang
+          make fuzz
+      - name: Actual DOS agent integration
+        if: steps.checks.outputs.dos == 'true'
+        timeout-minutes: 7
+        env:
+          # 8086 is the physical target; retain both CPU variants for manual full runs.
+          DOSRAVI_TEST_CPUS: ${{ github.event_name == 'workflow_dispatch' && '8086 80186' || '8086' }}
+        run: |
+          sudo apt-get install -y --no-install-recommends dosbox-x
+          make dos-test

@@ -18,6 +18,13 @@ class TransportError(OSError):
 
 
 class Transport(ABC):
+    """Ordered bytes: write all or raise; read up to size (b"" on idle/zero size).
+
+    A failed write may have sent a prefix. Never reconnect/replay in this layer.
+    Serial/TCP writes have a five-second total deadline. close releases owned
+    resources even when restoring device settings fails. No target reset here.
+    """
+
     @abstractmethod
     def write(self, data: bytes) -> None:
         raise NotImplementedError
@@ -53,40 +60,74 @@ class SerialTransport(Transport):
         if baud not in _BAUDS:
             raise ValueError(f"unsupported baud {baud}")
         self.fd = os.open(device, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
-        attrs = termios.tcgetattr(self.fd)
-        self.original_attrs = [
-            *attrs[:6],
-            list(attrs[6]),
-        ]
-        attrs[0] = 0
-        attrs[1] = 0
-        attrs[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
-        attrs[3] = 0
-        attrs[4] = _BAUDS[baud]
-        attrs[5] = _BAUDS[baud]
-        attrs[6][termios.VMIN] = 0
-        attrs[6][termios.VTIME] = 0
-        termios.tcsetattr(self.fd, termios.TCSANOW, attrs)
-        termios.tcflush(self.fd, termios.TCIOFLUSH)
+        self.original_attrs = None
+        try:
+            attrs = termios.tcgetattr(self.fd)
+            self.original_attrs = [*attrs[:6], list(attrs[6])]
+            attrs[0] = 0
+            attrs[1] = 0
+            attrs[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
+            attrs[3] = 0
+            attrs[4] = _BAUDS[baud]
+            attrs[5] = _BAUDS[baud]
+            attrs[6][termios.VMIN] = 0
+            attrs[6][termios.VTIME] = 0
+            termios.tcsetattr(self.fd, termios.TCSANOW, attrs)
+            termios.tcflush(self.fd, termios.TCIOFLUSH)
+        except BaseException:
+            # Preserve the setup error even if a disconnected device cannot restore.
+            try:
+                self.close()
+            except (OSError, termios.error):
+                pass
+            raise
 
     def write(self, data: bytes) -> None:
+        deadline = time.monotonic() + 5.0
         view = memoryview(data)
         while view:
-            _, writable, _ = select.select([], [self.fd], [], 5.0)
-            if not writable:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 raise TransportError("serial write timeout")
-            written = os.write(self.fd, view)
+            try:
+                _, writable, _ = select.select([], [self.fd], [], remaining)
+                if not writable:
+                    raise TransportError("serial write timeout")
+                written = os.write(self.fd, view)
+            except (InterruptedError, BlockingIOError):
+                continue
+            if written == 0:
+                raise TransportError("serial disconnected during write")
             view = view[written:]
 
     def read(self, size: int, timeout: float) -> bytes:
-        readable, _, _ = select.select([self.fd], [], [], max(timeout, 0.0))
-        return os.read(self.fd, size) if readable else b""
+        if size <= 0:
+            return b""
+        deadline = time.monotonic() + max(timeout, 0.0)
+        while True:
+            try:
+                readable, _, _ = select.select(
+                    [self.fd], [], [], max(0.0, deadline - time.monotonic())
+                )
+                if not readable:
+                    return b""
+                data = os.read(self.fd, size)
+            except (InterruptedError, BlockingIOError):
+                if time.monotonic() >= deadline:
+                    return b""
+                continue
+            if not data:
+                raise TransportError("serial disconnected during read")
+            return data
 
     def close(self) -> None:
         if self.fd >= 0:
-            termios.tcsetattr(self.fd, termios.TCSANOW, self.original_attrs)
-            os.close(self.fd)
-            self.fd = -1
+            fd, self.fd = self.fd, -1
+            try:
+                if self.original_attrs is not None:
+                    termios.tcsetattr(fd, termios.TCSANOW, self.original_attrs)
+            finally:
+                os.close(fd)
 
 
 class SocketTransport(Transport):
@@ -94,17 +135,27 @@ class SocketTransport(Transport):
 
     def __init__(self, host: str, port: int, connect_timeout: float = 5.0):
         self.socket = socket.create_connection((host, port), connect_timeout)
-        self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        try:
+            self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except BaseException:
+            self.socket.close()
+            raise
 
     def write(self, data: bytes) -> None:
+        self.socket.settimeout(5.0)
         self.socket.sendall(data)
 
     def read(self, size: int, timeout: float) -> bytes:
+        if size <= 0:
+            return b""
         self.socket.settimeout(max(timeout, 0.0))
         try:
-            return self.socket.recv(size)
-        except TimeoutError:
+            data = self.socket.recv(size)
+        except (TimeoutError, BlockingIOError):
             return b""
+        if not data:
+            raise TransportError("socket disconnected during read")
+        return data
 
     def close(self) -> None:
         self.socket.close()

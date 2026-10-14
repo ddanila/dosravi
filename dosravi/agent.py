@@ -306,8 +306,8 @@ class Agent:
                                 Tag.MESSAGE, "execution ID reused for different command"
                             )
                         ]
-                    _, status, values = self._unpack_cached(command, payload)
-                    return status, values
+                    _, status, _ = self._unpack_cached(command, payload)
+                    return status, [payload[2:]]
                 program = self._path(fields)
                 if not program.is_file():
                     return Status.NOT_FOUND, []

@@ -174,8 +174,17 @@ PY
     echo "DOSBox-X $cpu serial integration passed"
 }
 
+# Local acceptance keeps both CPUs; CI can select the physical 8086 target.
+read -r -a test_cpus <<< "${DOSRAVI_TEST_CPUS:-8086 80186}"
+for cpu in "${test_cpus[@]}"; do
+    case "$cpu" in
+        8086|80186) ;;
+        *) echo "unsupported test CPU: $cpu" >&2; exit 2 ;;
+    esac
+done
 test_dos_file_shim
 test_boot_rollback
 test_local_quit
-run_cpu 8086
-run_cpu 80186
+for cpu in "${test_cpus[@]}"; do
+    run_cpu "$cpu"
+done

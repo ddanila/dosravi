@@ -97,6 +97,7 @@ class Client:
             FrameType.REQUEST, txid, payload=request_payload(command, *fields)
         )
         encoded = frame.encode()
+        started = False
         for attempt in range(self.retries + 1):
             self.event(
                 {
@@ -132,7 +133,14 @@ class Client:
                                 "message": message,
                             }
                         )
-                        if command == Command.EXEC and message == "STARTED":
+                        if (
+                            command == Command.EXEC
+                            and event_command == Command.EXEC
+                            and event_status == Status.OK
+                            and message == "STARTED"
+                            and not started
+                        ):
+                            started = True
                             deadline = time.monotonic() + self.exec_timeout
                         continue
                     if (
@@ -158,6 +166,11 @@ class Client:
                         )
                         raise RemoteError(command, status, message, values)
                     return values
+            if started:
+                raise TransportError(
+                    "EXEC completion timed out after STARTED; outcome unknown; "
+                    "request was not retransmitted"
+                )
         raise TransportError(
             f"{command.name} timed out after {self.retries + 1} attempts"
         )

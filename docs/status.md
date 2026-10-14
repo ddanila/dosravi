@@ -70,3 +70,54 @@ separate exact 5 V read. The accepted session pairs are
 Store each run in a dedicated session directory. A failed or interrupted
 physical run remains evidence and must not be replaced by an emulator claim.
 Follow [`physical-runbook.md`](physical-runbook.md) for the ordered commands.
+
+## RAVI refactor regression gates
+
+Before extracting shared host code, run `make check` and `make dos-test`.
+`make verify` additionally retains decoder fuzzing and DOS distribution checks.
+The fast tests use real PTYs/socket pairs for byte transport and deterministic
+fault injection for short writes, readiness races, EOF, one write deadline,
+failed setup/restore cleanup, and exact attempted-TX/received-RX logging.
+Execution tests cover a bounded STARTED wait, duplicate/unrelated events,
+no automatic retransmission after STARTED, and host reconnect versus target
+restart. The actual DOS integration now exercises cache loss by restarting the
+agent through its launcher and explicitly submitting the old execution ID.
+It also guards status 85 after captured EXEC: the tested bcc cleanup path lost
+that status, so normal agent shutdown now flushes stdio and terminates through
+DOS directly, which closes the process handles.
+That last test deliberately executes the harmless fixture twice: it documents
+why an application must not automatically repeat an uncertain real operation.
+
+CI runs on pull requests, default-branch pushes, and manual dispatch, cancelling
+superseded runs. `tools/select_ci.py` skips dependencies for prose-only changes,
+runs the native and actual-DOS checks for code changes, and adds the AFL smoke
+campaign for C decoder/harness changes. Unknown paths or unavailable diffs run
+all checks. Ordinary CI tests the physical target's 8086 instruction set;
+manual dispatch and default local `make dos-test` also exercise 80186.
+`DOSRAVI_TEST_CPUS=8086 make dos-test` reproduces the ordinary CI emulator gate.
+The packaged Ubuntu 24.04 DOSBox-X avoids compiling an emulator in each job.
+
+Preserve the existing wire fixtures, CLI, output artifacts, and execution
+semantics during extraction. A transport writes all bytes or raises (a prefix
+may already have been sent), reads up to the requested length, distinguishes
+idle timeout from EOF, and never reconnects or resets a target implicitly.
+Serial and TCP writes have a five-second total deadline, independent of the
+previous read timeout. The logging TX stream records attempts, not delivery.
+
+Both reference and DOS agent execution caches are volatile. Recreating the
+host can recover a result while the same agent still retains its bounded cache
+entry; restarting the agent loses that guarantee. There is no boot/session
+identity in protocol v1 that could establish otherwise. A future shared RAVI API must expose that limit,
+retain the host execution journal, and require reconciliation of unknown
+outcomes rather than promise durable exactly-once execution.
+
+New targets should implement only their supported capabilities (memory/CALL
+or files/EXEC). Add a target-specific integration fixture before promoting its
+backend; these DOS tests do not qualify a bare Z80 ROM, DTR heartbeat, reset
+wiring, or physical serial timing. Firmware and protocol redesign are separate
+from this preparatory test work.
+
+Local validation on 2026-10-14 passed: `make check` (51 Python tests, the C
+protocol tests, Ruff and cppcheck), `make fuzz`, and `make dos-test` on both
+8086 and 80186. The workflow also passed actionlint. These are local test
+results, not a new physical qualification or a hosted CI result.

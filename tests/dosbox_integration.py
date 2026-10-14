@@ -343,6 +343,17 @@ def main() -> int:
     client.get("RUNS.BIN", runs)
     assert runs.read_bytes() == b"X"
 
+    # Deliberately restart the actual DOS agent through its tested launcher.
+    # This also requires launcher status 85 to survive after captured EXEC.
+    # Execution IDs survive in the host journal, not in the target's RAM cache.
+    client.rollback_update()
+    assert client.ping() == "PONG"
+    assert client.info()["version"] == "0.1.1"
+    after_restart = client.execute("HELLO.COM", "one two", execution_id)
+    assert after_restart.exit_code == 7
+    client.get("RUNS.BIN", runs)
+    assert runs.read_bytes() == b"XX"
+
     resumed = work / "RESUMED.BIN"
     resumed.with_name(resumed.name + ".part").write_bytes(source.read_bytes()[:777])
     client.get("INPUT.BIN", resumed)

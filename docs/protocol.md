@@ -103,3 +103,17 @@ UPDATE_CONFIRM.  Confirmation removes only the marker, not the fallback.
 An UPDATE request is rejected as BUSY while a marker already exists. Explicit
 rollback swaps the fallback into place, acknowledges, and makes the launcher
 invoke that restored agent immediately.
+
+### Execution lifetime boundary
+
+The execution cache is RAM owned by the running agent. A host reconnect is not
+an agent restart: restarting DOSRAVI clears replay and execution caches, even
+though the host has persisted its execution ID. Do not automatically submit an
+uncertain EXEC after a target restart; reconcile its artifacts/side effects
+first. Protocol v1 does not advertise a boot identity.
+
+Once a matching successful EXEC STARTED event is received, the host starts one
+bounded completion deadline. Duplicate STARTED events do not extend it. An
+expired completion deadline reports an unknown outcome without retransmission;
+transport errors likewise propagate without reconnecting. An explicit later
+retry with the same ID is only replay-safe while the agent still retains it.
