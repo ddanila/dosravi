@@ -225,3 +225,7 @@ The generated DOS `.COM` programs link the dev86 DOS C runtime, which is
 licensed separately under the GNU Library General Public License version 2.
 That toolchain dependency is not Willem code and does not change the MIT
 license of the DOSRAVI source.
+
+On Debian/Ubuntu, install `bcc bin86 elks-libc nasm` for the DOS toolchain.
+`elks-libc` supplies the DOS headers and runtime; it must be included explicitly
+when installing packages with `--no-install-recommends`.

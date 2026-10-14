@@ -29,7 +29,7 @@ jobs:
         if: steps.checks.outputs.native == 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends bcc bin86 cppcheck nasm
+          sudo apt-get install -y --no-install-recommends bcc bin86 elks-libc cppcheck nasm
           python -m pip install -e '.[test]'
       - name: Native contracts and static checks
         if: steps.checks.outputs.native == 'true'
