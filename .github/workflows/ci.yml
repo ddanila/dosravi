@@ -25,6 +25,9 @@ jobs:
       - name: Select checks
         id: checks
         run: python tools/select_ci.py
+      - name: Initialize pinned RAVI library
+        if: steps.checks.outputs.native == 'true'
+        run: git submodule update --init third_party/ravi
       - name: Install native toolchain
         if: steps.checks.outputs.native == 'true'
         run: |
@@ -34,6 +37,16 @@ jobs:
       - name: Native contracts and static checks
         if: steps.checks.outputs.native == 'true'
         run: make check
+      - name: Verify pin and installed CLI
+        if: steps.checks.outputs.native == 'true'
+        run: |
+          revision=$(git rev-parse HEAD:third_party/ravi)
+          python -c 'import pathlib, sys; assert "@" + sys.argv[1] in pathlib.Path("pyproject.toml").read_text()' "$revision"
+          python -m pip wheel --no-deps . -w "$RUNNER_TEMP/dos-wheel"
+          python -m venv "$RUNNER_TEMP/dos-installed"
+          "$RUNNER_TEMP/dos-installed/bin/pip" install "$RUNNER_TEMP"/dos-wheel/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/dos-installed/bin/dosravi" --help
       - name: Decoder fuzz smoke
         if: steps.checks.outputs.fuzz == 'true'
         timeout-minutes: 3

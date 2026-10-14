@@ -121,3 +121,31 @@ Local validation on 2026-10-14 passed: `make check` (51 Python tests, the C
 protocol tests, Ruff and cppcheck), `make fuzz`, and `make dos-test` on both
 8086 and 80186. The workflow also passed actionlint. These are local test
 results, not a new physical qualification or a hosted CI result.
+
+
+## Shared RAVI host library
+
+The Python transport, DOS v1 codec and client now live in
+[ddanila/ravi](https://github.com/ddanila/ravi). `dosravi.client`,
+`dosravi.protocol` and `dosravi.transport` retain compatibility imports, so the
+CLI, agent fixture and existing tests exercise that same implementation.
+The C agent, launcher, programmer workflows and qualification evidence remain
+in DOSRAVI; the wire format is unchanged.
+
+`third_party/ravi` and the wheel's Git dependency pin the same reviewed commit.
+Source execution uses the submodule independent of the current directory and
+rejects an already imported sibling library. Installed wheels use their declared
+dependency. Initialize the submodule after cloning; update both pins together.
+A pin change selects native and actual-DOS CI checks, while unchanged C decoder
+code does not require another fuzz campaign.
+
+The shared `FileTarget` interface exposes the existing file/EXEC operations and
+metadata explicitly reports volatile replay scope and no remote boot identity.
+See the library's [architecture](https://github.com/ddanila/ravi/blob/main/docs/architecture.md),
+[target guide](https://github.com/ddanila/ravi/blob/main/docs/adding-targets.md)
+and [test/update procedure](https://github.com/ddanila/ravi/blob/main/docs/testing.md).
+This extraction does not qualify Robotron 1715 hardware.
+
+Extraction validation on 2026-10-14: `make check` (51 Python tests, C protocol,
+Ruff and cppcheck), DOSBox-X integration on both 8086 and 80186, and an isolated
+wheel/CLI installation using the published RAVI dependency all passed.

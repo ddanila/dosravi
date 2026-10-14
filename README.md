@@ -30,9 +30,13 @@ shell and use Ctrl-C to stop it. Pass another TCP port directly to
 
 ## Host usage
 
-Python 3.10 or newer is required and there are no runtime dependencies.
+Python 3.10 or newer on a POSIX host is required. The shared
+[RAVI library](https://github.com/ddanila/ravi) is pinned by commit in both
+the source submodule and package dependency; it uses only the standard library.
+The DOS agent, CLI and physical workflows remain here.
 
 ```sh
+git submodule update --init third_party/ravi
 python3 -m pip install -e .
 dosravi --serial /dev/ttyUSB0 --baud 38400 ping
 dosravi --tcp 127.0.0.1:5000 info

@@ -11,6 +11,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_host_changes_run_actual_dos_but_not_decoder_fuzz(self):
         for path in [
+            "third_party/ravi",
             "dosravi/transport.py",
             "dosravi/client.py",
             "tests/test_transport.py",

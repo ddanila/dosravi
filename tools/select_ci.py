@@ -30,6 +30,9 @@ def select(paths):
             return dict(ALL)
         if path.endswith(".md") or path in {"LICENSE", ".gitignore"}:
             continue
+        if path == "third_party/ravi":
+            result["native"] = result["dos"] = True
+            continue
         if path.startswith(
             ("dosravi/", "src/", "include/", "tests/", "tools/", "dos/")
         ):
